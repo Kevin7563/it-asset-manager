@@ -111,6 +111,250 @@ function migrateLegacyDataDir(targetDir) {
 let mainWindow;
 let db;
 
+// =================================================================
+// 🔐 0-A. 帳號與權限（登入 / 角色 / 密碼雜湊 / 帳號管理）
+//    · admin＝全部功能；user＝僅「查詢資料」與「匯出報表」
+//    · 密碼以 scrypt + 隨機 salt 雜湊儲存，資料庫不存明碼
+//    · 寫入類 IPC 由後端統一攔阻（前端隱藏選單只是第二層防護）
+// =================================================================
+const AUTH_ROLE_ADMIN = 'admin';
+const AUTH_ROLE_USER = 'user';
+let authSession = null;   // { id, username, displayName, role, loginAt }
+const authIsLoggedIn = () => !!authSession;
+const authIsAdmin = () => !!(authSession && authSession.role === AUTH_ROLE_ADMIN);
+const authErrText = (e) => String(e && e.message ? e.message : e);
+const authHash = (password, salt) => crypto.scryptSync(String(password), String(salt), 64).toString('hex');
+function authVerify(password, salt, hash) {
+    try {
+        const calc = Buffer.from(authHash(password, salt), 'hex');
+        const stored = Buffer.from(String(hash || ''), 'hex');
+        return calc.length === stored.length && crypto.timingSafeEqual(calc, stored);
+    } catch (e) { return false; }
+}
+const authPublicUser = (r) => ({
+    id: r.id,
+    username: r.username,
+    displayName: r.display_name || r.username,
+    role: (r.role === AUTH_ROLE_ADMIN) ? AUTH_ROLE_ADMIN : AUTH_ROLE_USER,
+    isActive: !!r.is_active,
+    createdAt: r.created_at || '',
+    lastLogin: r.last_login || ''
+});
+async function authCreateUserRecord(u) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = authHash(u.password, salt);
+    await db.execute({
+        sql: `INSERT INTO app_users (username, display_name, password_hash, password_salt, role, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        args: [u.username, u.displayName || u.username, hash, salt, (u.role === AUTH_ROLE_ADMIN) ? AUTH_ROLE_ADMIN : AUTH_ROLE_USER, (u.isActive === false) ? 0 : 1, new Date().toISOString()]
+    });
+}
+// 🔐 首次啟動自動建立預設帳號：admin / 5508888（管理者）、User / 1234（一般使用者）
+async function authEnsureSchema() {
+    try {
+        await db.execute(`CREATE TABLE IF NOT EXISTS app_users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, display_name TEXT, password_hash TEXT, password_salt TEXT, role TEXT DEFAULT 'user', is_active INTEGER DEFAULT 1, created_at TEXT, last_login TEXT)`);
+        const cnt = await db.execute(`SELECT COUNT(*) AS c FROM app_users`);
+        if (!(cnt.rows && cnt.rows[0] && cnt.rows[0].c > 0)) {
+            await authCreateUserRecord({ username: 'admin', displayName: '系統管理員', password: '5508888', role: AUTH_ROLE_ADMIN });
+            await authCreateUserRecord({ username: 'User', displayName: '一般使用者', password: '1234', role: AUTH_ROLE_USER });
+        }
+    } catch (e) {}
+}
+async function authCountOtherAdmins(excludeId) {
+    const res = await db.execute({ sql: `SELECT COUNT(*) AS c FROM app_users WHERE role = 'admin' AND is_active = 1 AND id != ?`, args: [parseInt(excludeId) || 0] });
+    return (res.rows && res.rows[0] && res.rows[0].c) || 0;
+}
+async function authPushUsers(event) {
+    try {
+        const res = await db.execute(`SELECT * FROM app_users ORDER BY (role = 'admin') DESC, id ASC`);
+        const rows = (res.rows || []).map(authPublicUser);
+        if (event && typeof event.reply === 'function') event.reply('auth-users-data', rows);
+        else if (mainWindow && mainWindow.webContents) mainWindow.webContents.send('auth-users-data', rows);
+    } catch (e) {}
+}
+const AUTH_USERNAME_RE = /^[A-Za-z0-9._-]{3,32}$/;
+function authPasswordProblem(pw) {
+    const p = String(pw || '');
+    if (p.length < 4) return '密碼長度至少 4 碼。';
+    if (p.length > 64) return '密碼長度不可超過 64 碼。';
+    return '';
+}
+
+// ── 登入 / 登出 / 目前狀態（此區使用原始 ipcMain.on，不受下方權限攔阻影響）──
+const ipcOnRaw = ipcMain.on.bind(ipcMain);
+
+ipcOnRaw('auth-login', async (event, data) => {
+    try {
+        const username = String((data && data.username) || '').trim();
+        const password = String((data && data.password) || '');
+        if (!username || !password) { event.reply('auth-login-result', { ok: false, message: '請輸入帳號與密碼。' }); return; }
+        const res = await db.execute({ sql: `SELECT * FROM app_users WHERE username = ? COLLATE NOCASE LIMIT 1`, args: [username] });
+        const row = (res.rows || [])[0];
+        if (!row) { event.reply('auth-login-result', { ok: false, message: '帳號或密碼錯誤。' }); return; }
+        if (!row.is_active) { event.reply('auth-login-result', { ok: false, message: '此帳號已停用，請洽系統管理者。' }); return; }
+        if (!authVerify(password, row.password_salt, row.password_hash)) { event.reply('auth-login-result', { ok: false, message: '帳號或密碼錯誤。' }); return; }
+        const loginAt = new Date().toISOString();
+        authSession = {
+            id: row.id, username: row.username,
+            displayName: row.display_name || row.username,
+            role: (row.role === AUTH_ROLE_ADMIN) ? AUTH_ROLE_ADMIN : AUTH_ROLE_USER,
+            loginAt: loginAt
+        };
+        await db.execute({ sql: `UPDATE app_users SET last_login = ? WHERE id = ?`, args: [loginAt, row.id] });
+        event.reply('auth-login-result', { ok: true, user: authSession });
+    } catch (err) {
+        event.reply('auth-login-result', { ok: false, message: '登入失敗：' + authErrText(err) });
+    }
+});
+
+ipcOnRaw('auth-get-state', (event) => {
+    event.reply('auth-state', { loggedIn: authIsLoggedIn(), user: authSession });
+});
+
+ipcOnRaw('auth-logout', (event) => {
+    authSession = null;
+    event.reply('auth-logged-out');
+});
+
+// ── 修改自己的密碼 ──────────────────────────────────────
+ipcOnRaw('auth-change-password', async (event, data) => {
+    try {
+        if (!authIsLoggedIn()) { event.reply('auth-action-result', { ok: false, msg: '請先登入。' }); return; }
+        const cur = String((data && data.currentPassword) || '');
+        const next = String((data && data.newPassword) || '');
+        const problem = authPasswordProblem(next);
+        if (problem) { event.reply('auth-action-result', { ok: false, msg: problem }); return; }
+        const res = await db.execute({ sql: `SELECT * FROM app_users WHERE id = ?`, args: [authSession.id] });
+        const row = (res.rows || [])[0];
+        if (!row || !authVerify(cur, row.password_salt, row.password_hash)) { event.reply('auth-action-result', { ok: false, msg: '目前密碼不正確。' }); return; }
+        const salt = crypto.randomBytes(16).toString('hex');
+        await db.execute({ sql: `UPDATE app_users SET password_hash = ?, password_salt = ? WHERE id = ?`, args: [authHash(next, salt), salt, authSession.id] });
+        event.reply('auth-action-result', { ok: true, msg: '🔒 您的密碼已更新，下次登入請使用新密碼。' });
+    } catch (err) {
+        event.reply('auth-action-result', { ok: false, msg: '修改密碼失敗：' + authErrText(err) });
+    }
+});
+
+// ── 🛡️ 權限攔阻：未登入一律拒絕；一般使用者僅開放「查詢 + 匯出」白名單 ──
+const AUTH_USER_ALLOWED_CHANNELS = new Set([
+    // 查詢（僅讀取）
+    'get-all-assets', 'get-all-vendors', 'get-asset-history',
+    'get-asset-repair-cycles', 'get-asset-transfer-cycles',
+    'get-all-repairs', 'get-all-transfers', 'get-all-vendor-maint-records',
+    'field-get-options', 'upd-get-status',
+    // 匯出報表
+    'export-inventory-excel', 'export-asset-history', 'export-vendors-excel',
+    'export-vendor-maint-history-excel', 'export-to-excel-csv'
+]);
+ipcMain.on = function (channel, listener) {
+    return ipcOnRaw(channel, function (event, ...args) {
+        if (!authIsLoggedIn()) {
+            try { event.reply('auth-required', { channel: channel }); } catch (e) {}
+            return;
+        }
+        if (!authIsAdmin() && !AUTH_USER_ALLOWED_CHANNELS.has(channel)) {
+            try { event.reply('auth-denied', { channel: channel }); } catch (e) {}
+            return;
+        }
+        return listener(event, ...args);
+    });
+};
+
+// ── 帳號管理（僅管理者）────────────────────────────────
+const authDenyAdmin = (event) => event.reply('auth-action-result', { ok: false, msg: '權限不足：帳號管理僅限管理者使用。' });
+
+ipcOnRaw('auth-list-users', async (event) => {
+    if (!authIsAdmin()) return authDenyAdmin(event);
+    await authPushUsers(event);
+});
+
+ipcOnRaw('auth-create-user', async (event, data) => {
+    try {
+        if (!authIsAdmin()) return authDenyAdmin(event);
+        const username = String((data && data.username) || '').trim();
+        const displayName = String((data && data.displayName) || '').trim();
+        const password = String((data && data.password) || '');
+        const role = (data && data.role === AUTH_ROLE_ADMIN) ? AUTH_ROLE_ADMIN : AUTH_ROLE_USER;
+        const isActive = !(data && data.isActive === false);
+        if (!AUTH_USERNAME_RE.test(username)) { event.reply('auth-action-result', { ok: false, msg: '帳號請使用 3~32 位英文、數字或 . _ -（不可空白）。' }); return; }
+        const problem = authPasswordProblem(password);
+        if (problem) { event.reply('auth-action-result', { ok: false, msg: problem }); return; }
+        const dup = await db.execute({ sql: `SELECT id FROM app_users WHERE username = ? COLLATE NOCASE`, args: [username] });
+        if (dup.rows && dup.rows.length > 0) { event.reply('auth-action-result', { ok: false, msg: '帳號「' + username + '」已存在，請改用其他帳號。' }); return; }
+        await authCreateUserRecord({ username: username, displayName: displayName || username, password: password, role: role, isActive: isActive });
+        await authPushUsers(event);
+        event.reply('auth-action-result', { ok: true, msg: `✅ 已建立帳號「${username}」（${role === AUTH_ROLE_ADMIN ? '管理者' : '一般使用者'}）` });
+    } catch (err) {
+        event.reply('auth-action-result', { ok: false, msg: '建立帳號失敗：' + authErrText(err) });
+    }
+});
+
+ipcOnRaw('auth-update-user', async (event, data) => {
+    try {
+        if (!authIsAdmin()) return authDenyAdmin(event);
+        const id = parseInt(data && data.id) || 0;
+        if (!id) { event.reply('auth-action-result', { ok: false, msg: '找不到要更新的帳號。' }); return; }
+        const targetRes = await db.execute({ sql: `SELECT * FROM app_users WHERE id = ?`, args: [id] });
+        const target = (targetRes.rows || [])[0];
+        if (!target) { event.reply('auth-action-result', { ok: false, msg: '找不到要更新的帳號。' }); return; }
+        const displayName = (data && data.displayName !== undefined && String(data.displayName).trim() !== '') ? String(data.displayName).trim() : (target.display_name || target.username);
+        const role = (data && data.role === AUTH_ROLE_ADMIN) ? AUTH_ROLE_ADMIN : ((data && data.role === AUTH_ROLE_USER) ? AUTH_ROLE_USER : ((target.role === AUTH_ROLE_ADMIN) ? AUTH_ROLE_ADMIN : AUTH_ROLE_USER));
+        const isActive = (data && data.isActive !== undefined) ? !!data.isActive : !!target.is_active;
+        if (authSession && authSession.id === id && (role !== AUTH_ROLE_ADMIN || !isActive)) { event.reply('auth-action-result', { ok: false, msg: '不可停用或降級「目前登入中」的帳號。' }); return; }
+        if ((target.role === AUTH_ROLE_ADMIN && target.is_active) && (role !== AUTH_ROLE_ADMIN || !isActive)) {
+            const others = await authCountOtherAdmins(id);
+            if (others < 1) { event.reply('auth-action-result', { ok: false, msg: '系統至少要保留一個啟用中的管理者帳號。' }); return; }
+        }
+        await db.execute({ sql: `UPDATE app_users SET display_name = ?, role = ?, is_active = ? WHERE id = ?`, args: [displayName, role, isActive ? 1 : 0, id] });
+        await authPushUsers(event);
+        event.reply('auth-action-result', { ok: true, msg: `✅ 已更新帳號「${target.username}」。` });
+    } catch (err) {
+        event.reply('auth-action-result', { ok: false, msg: '更新帳號失敗：' + authErrText(err) });
+    }
+});
+
+ipcOnRaw('auth-reset-password', async (event, data) => {
+    try {
+        if (!authIsAdmin()) return authDenyAdmin(event);
+        const id = parseInt(data && data.id) || 0;
+        const next = String((data && data.newPassword) || '');
+        if (!id) { event.reply('auth-action-result', { ok: false, msg: '找不到要重設密碼的帳號。' }); return; }
+        const problem = authPasswordProblem(next);
+        if (problem) { event.reply('auth-action-result', { ok: false, msg: problem }); return; }
+        const res = await db.execute({ sql: `SELECT username FROM app_users WHERE id = ?`, args: [id] });
+        const row = (res.rows || [])[0];
+        if (!row) { event.reply('auth-action-result', { ok: false, msg: '找不到要重設密碼的帳號。' }); return; }
+        const salt = crypto.randomBytes(16).toString('hex');
+        await db.execute({ sql: `UPDATE app_users SET password_hash = ?, password_salt = ? WHERE id = ?`, args: [authHash(next, salt), salt, id] });
+        event.reply('auth-action-result', { ok: true, msg: `🔑 已重設「${row.username}」的密碼。` });
+    } catch (err) {
+        event.reply('auth-action-result', { ok: false, msg: '重設密碼失敗：' + authErrText(err) });
+    }
+});
+
+ipcOnRaw('auth-delete-user', async (event, data) => {
+    try {
+        if (!authIsAdmin()) return authDenyAdmin(event);
+        const id = parseInt(data && data.id) || 0;
+        if (!id) { event.reply('auth-action-result', { ok: false, msg: '找不到要刪除的帳號。' }); return; }
+        if (authSession && authSession.id === id) { event.reply('auth-action-result', { ok: false, msg: '不可刪除「目前登入中」的帳號。' }); return; }
+        const res = await db.execute({ sql: `SELECT * FROM app_users WHERE id = ?`, args: [id] });
+        const row = (res.rows || [])[0];
+        if (!row) { event.reply('auth-action-result', { ok: false, msg: '找不到要刪除的帳號。' }); return; }
+        if (row.role === AUTH_ROLE_ADMIN) {
+            const others = await authCountOtherAdmins(id);
+            if (others < 1) { event.reply('auth-action-result', { ok: false, msg: '系統至少要保留一個啟用中的管理者帳號。' }); return; }
+        }
+        await db.execute({ sql: `DELETE FROM app_users WHERE id = ?`, args: [id] });
+        await authPushUsers(event);
+        event.reply('auth-action-result', { ok: true, msg: `🗑️ 已刪除帳號「${row.username}」。` });
+    } catch (err) {
+        event.reply('auth-action-result', { ok: false, msg: '刪除帳號失敗：' + authErrText(err) });
+    }
+});
+
+
+
+
 // 1. 初始化連線至實體硬碟資料庫
 async function initDatabase() {
     try {
@@ -1571,7 +1815,7 @@ function showVersionWindow() {
         <li><span class="k">開發日期</span><span class="v">2026.10.15</span></li>
         <li><span class="k">更新日期</span><span class="v">2026.11.10</span></li>
         <li><span class="k">目前版本</span><span class="v"><span class="ver">v${ver}</span></span></li>
-        <li><span class="k">本次更新</span><span class="v">新增「🧾 資產規格 / 備註」欄位：可記錄設備規格與補充資訊，同步顯示於總覽表格、資產履歷、盤點總表與匯入範本；既有資料庫啟動時自動升級，原資料完整保留。</span></li>
+        <li><span class="k">本次更新</span><span class="v">新增「🔐 登入與權限」：管理者（admin）擁有全部功能，一般使用者僅能查詢與匯出報表；並新增「👥 帳號管理」可新增帳號、重設密碼、切換角色與停用刪除。密碼以 scrypt 雜湊儲存，寫入操作一律由後端攔阻。</span></li>
         <li><span class="k">聯絡信箱</span><span class="v"><a class="mail" href="mailto:kevin7563@gmail.com">kevin7563@gmail.com</a></span></li>
         <li><span class="k">版權宣告</span><span class="v">版權所有，盜版必究</span></li>
         </ul>
@@ -1610,6 +1854,7 @@ function buildAppMenu() {
 app.whenReady().then(async () => {
     await initDatabase();
     await upgradeDatabaseTables();
+    await authEnsureSchema();
     buildAppMenu();
     createWindow();
 });

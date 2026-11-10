@@ -52,12 +52,13 @@
 <header>
   <h1>📘 IT 資產管理系統 — 操作說明</h1>
   <p>從建立資產、維修、轉移，到廠商與系統管理，一頁看懂所有基本操作。</p>
-  <span class="badge">圖文操作指引　｜　適用版本 v1.2.2 以上</span>
+  <span class="badge">圖文操作指引　｜　適用版本 v1.3.0 以上</span>
 </header>
 <div class="wrap">
   <div class="nav">
     <a href="#overview">🧭 介面總覽</a>
     <a href="#quickstart">🚀 快速上手</a>
+    <a href="#login">🔐 登入與權限</a>
     <a href="#dashboard">📊 總覽看板</a>
     <a href="#add">➕ 新增資產</a>
     <a href="#repair">🔧 維修</a>
@@ -110,8 +111,37 @@
     <div class="tip ok"><span class="ico">✅</span><div>所有操作成功都會以「右下角浮動提示」呈現，不會跳出會卡住畫面的系統對話框。</div></div>
   </section>
 
+  <section id="login">
+    <h2><span class="num">3</span>🔐 登入與權限</h2>
+    <p>開啟程式後會先出現登入畫面，需輸入帳號與密碼才能使用系統。系統提供兩種角色：</p>
+    <table>
+      <tr><th>角色</th><th>權限範圍</th></tr>
+      <tr><td><b>👑 管理者</b>（admin）</td><td>全部功能：新增／修改／刪除資產、維修、轉移、廠商管理、欄位管理、資料庫備份還原、版本更新、匯入資料表，以及<b>帳號管理</b>。</td></tr>
+      <tr><td><b>👤 一般使用者</b>（user）</td><td>僅能<b>查詢資料</b>（總覽看板、即時搜尋、資產履歷）與<b>匯出報表</b>（盤點總表、資產履歷）。左側選單只會顯示「📊 總覽看板首頁」。</td></tr>
+    </table>
+    <h3>預設帳號</h3>
+    <ul class="steps">
+      <li>管理者：<code>admin</code> ／ 密碼 <code>5508888</code></li>
+      <li>一般使用者：<code>User</code> ／ 密碼 <code>1234</code></li>
+    </ul>
+    <div class="tip warn"><span class="ico">⚠️</span><div>首次登入後請立即到「⚙️ 系統管理 → 👥 帳號管理 → 🔒 修改我的密碼」更換預設密碼。</div></div>
+    <h3>登出</h3>
+    <p>側邊欄下方會顯示目前登入者與角色，按「登出」並確認後即回到登入畫面（畫面上的資料會一併清空）。</p>
+    <h3>👥 帳號管理（僅管理者可見）</h3>
+    <ul class="steps">
+      <li>位置：<b>⚙️ 系統管理 → 👥 帳號管理</b>（系統管理第一項）。</li>
+      <li><b>➕ 新增帳號</b>：填「帳號」（英數 3~32 碼）、顯示名稱、初始密碼（至少 4 碼）、角色與狀態。</li>
+      <li><b>🔑 重設密碼</b>：替其他使用者設定新密碼（不需知道對方舊密碼）。</li>
+      <li><b>🔁 切換角色</b>：一般使用者 ↔ 管理者。</li>
+      <li><b>⛔ 停用／✅ 啟用</b>：停用後該帳號無法登入，資料仍保留。</li>
+      <li><b>🗑️ 刪除</b>：永久移除該帳號。</li>
+    </ul>
+    <div class="tip info"><span class="ico">💡</span><div>系統會自動保護：<b>至少保留一個啟用中的管理者</b>，且<b>目前登入中的帳號不可停用、降級或刪除</b>。</div></div>
+    <div class="tip ok"><span class="ico">✅</span><div>密碼以 scrypt + 隨機 salt 雜湊儲存，資料庫不會保存明碼；一般使用者的寫入操作也會由後端直接攔阻，無法繞過畫面限制。</div></div>
+  </section>
+
   <section id="dashboard">
-    <h2><span class="num">3</span>總覽看板首頁</h2>
+    <h2><span class="num">4</span>總覽看板首頁</h2>
     <h3>🔍 即時搜尋</h3>
     <p>在搜尋框輸入資產編號、設備名稱、保管人等關鍵字，下方表格會即時篩選，不需按 Enter。</p>
     <h3>📋 查看資產履歷</h3>
@@ -127,7 +157,7 @@
     <div class="tip warn"><span class="ico">⚠️</span><div>表格可切換狀態顏色：<span class="pill ok">使用中</span> <span class="pill blue">庫存備用</span> <span class="pill orange">維修中</span> <span class="pill red">已報廢</span></div></div>
   </section>
   <section id="add">
-    <h2><span class="num">4</span>➕ 新增資訊資產</h2>
+    <h2><span class="num">5</span>➕ 新增資訊資產</h2>
     <ul class="steps">
       <li><b>選擇「資產大類」</b>：決定編號開頭的類別代碼（HW/SW/NET/DEV/SEC）。</li>
       <li><b>選擇「所屬部門」</b>：預設為「資訊部門 (IT)」，可改成實際使用單位。</li>
@@ -151,7 +181,7 @@
   </section>
 
   <section id="repair">
-    <h2><span class="num">5</span>🔧 資訊資產維修</h2>
+    <h2><span class="num">6</span>🔧 資訊資產維修</h2>
     <p>用來記錄資產送修到完工（或報廢結案）的完整週期。</p>
     <div class="flow">
       <span class="box">🔧 登記維修</span><span class="arrow">→</span>
@@ -175,7 +205,7 @@
   </section>
 
   <section id="transfer">
-    <h2><span class="num">6</span>🔄 資訊資產轉移</h2>
+    <h2><span class="num">7</span>🔄 資訊資產轉移</h2>
     <p>用於更換保管人、搬遷位置，或<b>跨部門調撥</b>。跨部門時系統會自動更新部門與重新編號。</p>
     <ul class="steps">
       <li><b>選擇轉移資產</b>：輸入關鍵字或點選，會自動帶入「原部門 / 原保管人 / 原位置」。</li>
@@ -193,7 +223,7 @@
     <div class="tip info"><span class="ico">💡</span><div>轉移後，於總覽點該資產的履歷，可在「🔄 轉移歷程」看到部門/保管人/位置的變化，以及是否改號。</div></div>
   </section>
   <section id="vendor">
-    <h2><span class="num">7</span>🏢 廠商管理</h2>
+    <h2><span class="num">8</span>🏢 廠商管理</h2>
     <div class="grid">
       <div class="card"><div class="h">📊 廠商管理看板</div><p>新增/更新合作廠商資料，填寫服務專員、電話、地址、NDA 狀態、維護合約期間，並可上傳 NDA 與採購合約電子檔。</p></div>
       <div class="card"><div class="h">✏️ 廠商資料維護</div><p>先用關鍵字搜尋廠商，再修改基本資料、增補或刪除隨附文件，或徹底註銷廠商。</p></div>
@@ -210,7 +240,7 @@
   </section>
 
   <section id="recycle">
-    <h2><span class="num">8</span>🗑️ 資源回收桶</h2>
+    <h2><span class="num">9</span>🗑️ 資源回收桶</h2>
     <p>資產不想直接刪除時，可先「移至回收桶」（軟刪除），之後仍可還原。</p>
     <ul class="steps">
       <li>在總覽看板點設備名稱開啟履歷，按「🗑️ 移至回收桶」並確認。</li>
@@ -221,7 +251,7 @@
   </section>
 
   <section id="system">
-    <h2><span class="num">9</span>⚙️ 系統管理</h2>
+    <h2><span class="num">10</span>⚙️ 系統管理</h2>
     <h3>🗄️ 資料庫備份</h3>
     <ul>
       <li><b>📦 資訊資產資料備份</b>：只備份資產相關資料。</li>
@@ -243,7 +273,7 @@
     <div class="tip warn"><span class="ico">⚠️</span><div>「還原」會覆蓋目前資料，務必先確認備份檔正確。重大操作前建議先做一次「💾 全備份」。</div></div>
   </section>
   <section id="field-manage">
-    <h2><span class="num">10</span>🧩 欄位管理</h2>
+    <h2><span class="num">11</span>🧩 欄位管理</h2>
     <p>位置：<b>⚙️ 系統管理 → 🧩 欄位管理</b>（系統管理的第一項）。可自行新增／移除「<b>資產大類</b>」與「<b>所屬部門</b>」的選項，讓不同產業（醫院、學校、公司…）都能使用自己的分類。</p>
     <div class="tip info"><span class="ico">💡</span><div>可自行新增／移除「資產大類」「所屬部門」選項；<b>名稱可中文</b>、<b>代號請用英數（1~8 碼）</b>，代號會用於資產編號（例：HW、MON、IT）。</div></div>
     <h3>➕ 新增選項</h3>
@@ -271,7 +301,7 @@
   </section>
 
   <section id="numbering">
-    <h2><span class="num">11</span>🔢 資產編號規則</h2>
+    <h2><span class="num">12</span>🔢 資產編號規則</h2>
     <p>格式：<code>類別 - 部門代號 - 建檔日期 - 流水號</code>，例如 <code>NET-IT-20261029-0001</code>（資訊部門的網路設備）。</p>
     <h3>類別代碼</h3>
     <table>
@@ -303,7 +333,7 @@
   </section>
 
   <section id="export">
-    <h2><span class="num">12</span>📥 匯出與條碼貼紙</h2>
+    <h2><span class="num">13</span>📥 匯出與條碼貼紙</h2>
     <h3>匯出 Excel 盤點總表（全部資產）</h3>
     <ul class="steps">
       <li>到「📊 總覽看板首頁」，點右上角「📥 匯出 Excel 盤點總表」。</li>
@@ -319,7 +349,7 @@
   </section>
 
   <section id="faq">
-    <h2><span class="num">13</span>❓ 常見問題</h2>
+    <h2><span class="num">14</span>❓ 常見問題</h2>
     <h3>Q1：按「確認登記」後，為什麼右下角只出現提示、沒有彈出視窗？</h3>
     <p>本系統改用「站內浮動提示」取代系統對話框，避免視窗卡住，屬正常行為。</p>
     <h3>Q2：轉移後編號沒有改變？</h3>
@@ -334,6 +364,10 @@
     <p>列印時縮放請設 100%、使用雷射印表機、避免過度縮小；貼紙裁切時請保留條碼左右空白區。</p>
     <h3>Q7：新增資產時，選單裡找不到我要的大類或部門？</h3>
     <p>請先到「⚙️ 系統管理 → 🧩 欄位管理」新增該選項（填「名稱」與「英數代號」），按「➕ 新增」後，新增資產／編輯資產／轉移的下拉選單會立即出現該選項。</p>
+    <h3>Q8：忘記密碼怎麼辦？</h3>
+    <p>請洽系統管理者，到「⚙️ 系統管理 → 👥 帳號管理」對該帳號按「🔑 重設密碼」即可設定新密碼。若管理者本人忘記密碼，需由另一位管理者協助重設。</p>
+    <h3>Q9：為什麼我登入後只看到「總覽看板首頁」？</h3>
+    <p>代表您目前是一般使用者帳號，依權限設計只能查詢資料與匯出報表。若需要維護功能，請管理者到「👥 帳號管理 → 🔁 切換角色」將您改為管理者。</p>
     <div class="tip info"><span class="ico">📮</span><div>若操作上還有疑問，歡迎來信 <b>kevin7563@gmail.com</b>。</div></div>
   </section>
 </div>
