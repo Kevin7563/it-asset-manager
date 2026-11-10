@@ -1,0 +1,71 @@
+{
+  "name": "it-asset-manager",
+  "version": "1.2.1",
+  "description": "IT Asset Management System",
+  "author": "KevinChang",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --publish never",
+    "build:installer": "electron-builder --win nsis --publish never"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.18.0",
+    "exceljs": "^4.4.0",
+    "qrcode": "^1.5.4",
+    "sqlite-electron": "^3.9.12",
+    "sqlite3": "^6.0.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^32.1.2",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.it.assetmanager",
+    "productName": "IT資產管理系統",
+    "copyright": "Copyright © 2026 KevinChang. 版權所有,盜版必究",
+    "artifactName": "IT資產管理系統_安裝檔_v${version}.${ext}",
+    "asar": false,
+    "npmRebuild": false,
+    "compression": "maximum",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!uploads/**",
+      "!dist/**",
+      "!tmp_*/**",
+      "!*.db",
+      "!*.db-shm",
+      "!*.db-wal",
+      "!*.xlsx",
+      "!*.log",
+      "!node_modules/xlsx/**",
+      "!node_modules/@libsql/**",
+      "!node_modules/sqlite-electron/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "IT資產管理系統",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

@@ -1,0 +1,61 @@
+# ============================================================
+#  IT 資產管理系統｜Git 忽略清單
+#  原則：只把「原始碼 / 文件 / 範例檔」納入版控
+#        資料庫、附件、安裝檔、相依套件一律不進版控
+# ============================================================
+
+# ---------- Node / Electron 相依套件 ----------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+.pnpm-store/
+
+# ---------- 打包產物（安裝檔約 90MB，不進版控） ----------
+dist/
+build/
+release/
+out/
+*.blockmap
+build_log.txt
+*.exe
+*.msi
+*.nsis.7z
+
+# ---------- 資料庫（含實際資產資料，禁止上傳） ----------
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ---------- 使用者附件 / 執行期設定（含個資） ----------
+uploads/
+data_location.json
+latest.json
+*.log
+
+# ---------- 匯出報表暫存（範例_*.xlsx 會保留） ----------
+IT_資產盤點報表_*.xlsx
+IT_Asset_Inventory_*.csv
+~$*.xlsx
+~$*.docx
+*.tmp
+*.bak
+
+# ---------- 編輯器 / 作業系統 ----------
+.vscode/
+.idea/
+*.code-workspace
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---------- 環境變數 / 金鑰憑證 ----------
+.env
+.env.*
+*.pem
+*.pfx
+*.key

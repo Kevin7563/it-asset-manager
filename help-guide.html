@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>操作說明 - IT 資產管理系統</title>
+<style>
+  :root{--primary:#1e293b;--accent:#2563eb;--ok:#10b981;--warn:#f59e0b;--danger:#ef4444;--bg:#f8fafc;--border:#e2e8f0;--muted:#64748b;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:"Microsoft JhengHei","Segoe UI",sans-serif;}
+  body{background:var(--bg);color:#0f172a;line-height:1.75;}
+  header{background:linear-gradient(135deg,#0f172a,#1e293b 55%,#312e81);color:#fff;padding:34px 40px;}
+  header h1{font-size:26px;letter-spacing:1px;}
+  header p{margin-top:8px;color:#cbd5e1;font-size:14px;}
+  header .badge{display:inline-block;margin-top:14px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:4px 14px;font-size:12px;color:#e2e8f0;}
+  .wrap{max-width:980px;margin:0 auto;padding:8px 22px 60px;}
+  .nav{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 8px;position:sticky;top:0;background:var(--bg);padding:10px 0;z-index:5;}
+  .nav a{background:#fff;border:1px solid var(--border);border-radius:999px;padding:6px 14px;font-size:13px;color:var(--primary);text-decoration:none;transition:.15s;}
+  .nav a:hover{background:#eef2ff;border-color:#c7d2fe;color:var(--accent);}
+  section{background:#fff;border:1px solid var(--border);border-radius:14px;padding:24px 26px;margin:20px 0;box-shadow:0 1px 3px rgba(15,23,42,.05);}
+  h2{font-size:19px;color:var(--primary);display:flex;align-items:center;gap:10px;padding-bottom:12px;margin-bottom:16px;border-bottom:2px solid var(--border);}
+  h2 .num{background:var(--accent);color:#fff;border-radius:8px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;}
+  h3{font-size:15px;color:#334155;margin:18px 0 8px;border-left:4px solid var(--accent);padding-left:10px;}
+  p{font-size:14px;color:#334155;margin:8px 0;}
+  ul,ol{margin:8px 0 8px 22px;font-size:14px;color:#334155;}
+  li{margin:5px 0;}
+  .steps{list-style:none;margin:14px 0;counter-reset:s;}
+  .steps>li{position:relative;padding:12px 14px 12px 52px;border:1px solid var(--border);border-radius:10px;margin:10px 0;background:#fbfdff;}
+  .steps>li::before{counter-increment:s;content:counter(s);position:absolute;left:14px;top:12px;width:26px;height:26px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:13px;}
+  .tip{border-radius:10px;padding:12px 14px;margin:12px 0;font-size:13.5px;display:flex;gap:10px;align-items:flex-start;}
+  .tip.info{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;}
+  .tip.ok{background:#ecfdf5;border:1px solid #bbf7d0;color:#166534;}
+  .tip.warn{background:#fffbeb;border:1px solid #fde68a;color:#b45309;}
+  .tip .ico{font-size:18px;line-height:1.2;}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin:12px 0;}
+  .card{border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:#fbfdff;}
+  .card .h{font-weight:bold;color:var(--primary);font-size:14.5px;margin-bottom:6px;display:flex;gap:8px;align-items:center;}
+  .card p{font-size:13px;color:var(--muted);margin:0;}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;}
+  th,td{border:1px solid var(--border);padding:9px 12px;text-align:left;}
+  th{background:#f1f5f9;color:#334155;}
+  code{background:#f1f5f9;border-radius:5px;padding:1px 6px;font-family:Consolas,monospace;color:#b91c1c;font-size:13px;}
+  .pill{display:inline-block;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:bold;}
+  .pill.ok{background:#dcfce7;color:#166534;} .pill.blue{background:#dbeafe;color:#1e40af;} .pill.orange{background:#fef3c7;color:#b45309;} .pill.red{background:#fee2e2;color:#b91c1c;}
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0;font-size:13px;}
+  .flow .box{background:#eef2ff;border:1px solid #c7d2fe;color:#1e3a8a;border-radius:8px;padding:6px 12px;font-weight:bold;}
+  .flow .arrow{color:#94a3b8;font-weight:bold;}
+  footer{text-align:center;color:#94a3b8;font-size:12.5px;padding:26px 10px;}
+  @media (max-width:720px){.grid{grid-template-columns:1fr;} header{padding:24px;}}
+  @media print{header{background:#1e293b !important;-webkit-print-color-adjust:exact;} body{background:#fff;} .nav{display:none;} section{break-inside:avoid;box-shadow:none;}}
+</style>
+</head>
+<body>
+<header>
+  <h1>📘 IT 資產管理系統 — 操作說明</h1>
+  <p>從建立資產、維修、轉移，到廠商與系統管理，一頁看懂所有基本操作。</p>
+  <span class="badge">圖文操作指引　｜　適用版本 v1.2.1 以上</span>
+</header>
+<div class="wrap">
+  <div class="nav">
+    <a href="#overview">🧭 介面總覽</a>
+    <a href="#quickstart">🚀 快速上手</a>
+    <a href="#dashboard">📊 總覽看板</a>
+    <a href="#add">➕ 新增資產</a>
+    <a href="#repair">🔧 維修</a>
+    <a href="#transfer">🔄 轉移</a>
+    <a href="#vendor">🏢 廠商</a>
+    <a href="#recycle">🗑️ 回收桶</a>
+    <a href="#system">⚙️ 系統管理</a>
+    <a href="#field-manage">🧩 欄位管理</a>
+    <a href="#numbering">🔢 編號規則</a>
+    <a href="#export">📥 匯出/條碼</a>
+    <a href="#faq">❓ 常見問題</a>
+  </div>
+  <section id="overview">
+    <h2><span class="num">1</span>介面總覽</h2>
+    <p>系統採用「左側樹狀選單 + 右側工作區」的版面。左側依功能分層展開，滑鼠移到項目會有放大回饋與高亮，點擊即可切換右側功能。</p>
+    <div class="grid">
+      <div class="card"><div class="h">📁 資訊資產管理</div><p>新增資產、資產維修、資產轉移、資源回收桶。</p></div>
+      <div class="card"><div class="h">🏢 廠商管理</div><p>廠商管理看板、廠商資料維護、廠商維護歷程看板。</p></div>
+      <div class="card"><div class="h">⚙️ 系統管理</div><p>欄位管理、資料庫備份、資料庫還原、版本更新、匯入資料表。</p></div>
+      <div class="card"><div class="h">📊 總覽看板首頁</div><p>所有資產的總覽、搜尋、匯出盤點總表。</p></div>
+    </div>
+    <h3>上方選單</h3>
+    <table>
+      <tr><th>選單</th><th>功能</th></tr>
+      <tr><td>檔案</td><td>結束程式</td></tr>
+      <tr><td>編輯</td><td>復原 / 重做 / 剪下 / 複製 / 貼上 / 全選</td></tr>
+      <tr><td>檢視</td><td>重新載入、開發者工具、縮放、全螢幕</td></tr>
+      <tr><td>視窗</td><td>最小化 / 關閉</td></tr>
+      <tr><td>說明</td><td><b>操作說明</b>（本頁）、<b>版本說明</b></td></tr>
+    </table>
+    <div class="tip info"><span class="ico">💡</span><div>側邊欄群組可點擊標題展開／收合，箭頭 <code>▶</code> 會旋轉成 <code>▼</code> 表示展開。</div></div>
+  </section>
+
+  <section id="quickstart">
+    <h2><span class="num">2</span>快速上手（5 個步驟）</h2>
+    <div class="flow">
+      <span class="box">➕ 新增資產</span><span class="arrow">→</span>
+      <span class="box">📊 總覽確認</span><span class="arrow">→</span>
+      <span class="box">🔧 維修/🔄 轉移</span><span class="arrow">→</span>
+      <span class="box">📥 匯出盤點</span><span class="arrow">→</span>
+      <span class="box">🗄️ 定期備份</span>
+    </div>
+    <ol class="steps">
+      <li><b>選「資產大類」與「所屬部門」</b>：系統會自動產生資產編號（唯讀），不需手動輸入。</li>
+      <li><b>填寫設備名稱（必填）</b>與其他欄位，按「確認登記此筆資產」，右下角會跳出綠色成功提示。</li>
+      <li><b>到總覽看板確認</b>資料是否正確，可即時搜尋。</li>
+      <li><b>後續維護</b>：需要送修用「資訊資產維修」；換保管人/部門/位置用「資訊資產轉移」。</li>
+      <li><b>匯出與備份</b>：用「匯出 Excel 盤點總表」列印條碼貼紙；定期到系統管理做資料庫備份。</li>
+    </ol>
+    <div class="tip ok"><span class="ico">✅</span><div>所有操作成功都會以「右下角浮動提示」呈現，不會跳出會卡住畫面的系統對話框。</div></div>
+  </section>
+
+  <section id="dashboard">
+    <h2><span class="num">3</span>總覽看板首頁</h2>
+    <h3>🔍 即時搜尋</h3>
+    <p>在搜尋框輸入資產編號、設備名稱、保管人等關鍵字，下方表格會即時篩選，不需按 Enter。</p>
+    <h3>📋 查看資產履歷</h3>
+    <p>點擊表格中的<b>設備名稱（藍色連結）</b>，會開啟「資產維運履歷」彈窗，內容包含：</p>
+    <ul>
+      <li><b>基本資料</b>：設備名稱、大類、所屬部門、保管窗口、購買廠商、S/N、狀態、日期、位置、備註。</li>
+      <li><b>🔧 維修紀錄</b>：每次維修的「送修 → 完工／報廢」週期。</li>
+      <li><b>🔄 轉移歷程</b>：每次轉移的「部門／保管人／位置」變化，若部門未變更會標示「編號不變」。</li>
+      <li>底部按鈕：<span class="pill blue">✏️ 編輯修改</span> <span class="pill red">🗑️ 移至回收桶</span> <span class="pill ok">📤 匯出資產履歷</span></li>
+    </ul>
+    <h3>📥 匯出 Excel 盤點總表</h3>
+    <p>點右上角「匯出 Excel 盤點總表」，會匯出<b>所有資產</b>的完整盤點表，最後一欄附上<b>資產條碼貼紙</b>（可直接列印）。詳見「匯出與條碼貼紙」章節。</p>
+    <div class="tip warn"><span class="ico">⚠️</span><div>表格可切換狀態顏色：<span class="pill ok">使用中</span> <span class="pill blue">庫存備用</span> <span class="pill orange">維修中</span> <span class="pill red">已報廢</span></div></div>
+  </section>
+  <section id="add">
+    <h2><span class="num">4</span>➕ 新增資訊資產</h2>
+    <ul class="steps">
+      <li><b>選擇「資產大類」</b>：決定編號開頭的類別代碼（HW/SW/NET/DEV/SEC）。</li>
+      <li><b>選擇「所屬部門」</b>：預設為「資訊部門 (IT)」，可改成實際使用單位。</li>
+      <li><b>系統自動產生資產編號</b>（灰底唯讀）：格式為 <code>類別-部門-建檔日期-流水號</code>。</li>
+      <li><b>填寫設備名稱（必填）</b>、原廠序號、保管窗口、擺放地點、購買廠商、採購/保固日期、備註。</li>
+      <li>按「💾 確認登記此筆資產」，右下角跳出成功提示並自動回到總覽看板。</li>
+    </ul>
+    <h3>欄位說明</h3>
+    <table>
+      <tr><th>欄位</th><th>說明</th></tr>
+      <tr><td>資產大類</td><td>硬體設備(HW)、軟體授權(SW)、網路設備(NET)、資訊周邊(DEV)、帳密安全性(SEC)</td></tr>
+      <tr><td>所屬部門</td><td>資訊部門(IT)、總務(GA)、病房(WA)、兒科(IN)…等，決定編號中的部門代碼</td></tr>
+      <tr><td>設備 / 項目名稱</td><td>必填，例如「護理站電腦」、「印表機」</td></tr>
+      <tr><td>連動合作廠商</td><td>可選既有廠商，若無則為「其他 (預設)」</td></tr>
+      <tr><td>維運狀態</td><td>新增時只有「🟢 線上正常使用 / 🔵 庫存備用」兩種初始狀態</td></tr>
+    </table>
+    <div class="tip info"><span class="ico">💡</span><div>新增時只需選好大類與部門，編號就會自動產生；<b>維修中</b>與<b>已報廢</b>狀態由「維修」與「報廢」流程自動管理，不需手動選。</div></div>
+  </section>
+
+  <section id="repair">
+    <h2><span class="num">5</span>🔧 資訊資產維修</h2>
+    <p>用來記錄資產送修到完工（或報廢結案）的完整週期。</p>
+    <div class="flow">
+      <span class="box">🔧 登記維修</span><span class="arrow">→</span>
+      <span class="box">🟡 資產轉為「維修中」</span><span class="arrow">→</span>
+      <span class="box">✅ 完工</span><span class="arrow">→</span>
+      <span class="box">🟢 自動復原「使用中」</span>
+    </div>
+    <ul class="steps">
+      <li><b>選擇維修資產</b>：可輸入關鍵字或點選下拉，選定後自動帶入目前保管人與位置資訊。</li>
+      <li><b>填寫故障描述（必填）</b>、維修廠商/工程師、送修日期、費用、備註。</li>
+      <li>按「🔧 確認登記維修並轉為維修中」。</li>
+      <li>維修完成後，在下方「維修履歷記錄總表」按 <b>✅ 完工</b>，資產狀態會自動回到「使用中」。</li>
+    </ul>
+    <table>
+      <tr><th>狀態</th><th>意義</th></tr>
+      <tr><td><span class="pill orange">🟡 維修中</span></td><td>工單進行中，該資產在「編輯修改」時狀態會被鎖定</td></tr>
+      <tr><td><span class="pill ok">✅ 已完工</span></td><td>已完成維修，資產復原為使用中</td></tr>
+      <tr><td><span class="pill red">🚨 因報廢結案</span></td><td>維修期間資產被報廢，工單自動結案</td></tr>
+    </table>
+    <div class="tip warn"><span class="ico">⚠️</span><div>資產在「維修中」時，到 editor 編輯修改會看到維運狀態被鎖定；這是避免與維修週期衝突，完工後即解除。</div></div>
+  </section>
+
+  <section id="transfer">
+    <h2><span class="num">6</span>🔄 資訊資產轉移</h2>
+    <p>用於更換保管人、搬遷位置，或<b>跨部門調撥</b>。跨部門時系統會自動更新部門與重新編號。</p>
+    <ul class="steps">
+      <li><b>選擇轉移資產</b>：輸入關鍵字或點選，會自動帶入「原部門 / 原保管人 / 原位置」。</li>
+      <li><b>選擇「轉移後部門」</b>（必填）：下方提示會即時告訴您是否會重新編號。</li>
+      <li>填寫<b>新保管窗口</b>與<b>新擺放地點</b>（必填），可補轉移原因與備註。</li>
+      <li>按「🔄 確認登記轉移並更新資產資訊」。</li>
+    </ul>
+    <h3>改號規則（重點）</h3>
+    <table>
+      <tr><th>情況</th><th>結果</th></tr>
+      <tr><td>選擇<b>相同部門</b></td><td>只更新保管人/位置，<b>資產編號不變</b></td></tr>
+      <tr><td>選擇<b>不同部門</b></td><td>依新部門重新編號，例如 <code>DEV-IT-20261029-0001</code> → <code>DEV-IN-20261029-0002</code></td></tr>
+    </table>
+    <div class="tip warn"><span class="ico">⚠️</span><div>若您要「改號」，請務必在「轉移後部門」選擇<b>不同</b>的部門；選相同部門是不會改號的。</div></div>
+    <div class="tip info"><span class="ico">💡</span><div>轉移後，於總覽點該資產的履歷，可在「🔄 轉移歷程」看到部門/保管人/位置的變化，以及是否改號。</div></div>
+  </section>
+  <section id="vendor">
+    <h2><span class="num">7</span>🏢 廠商管理</h2>
+    <div class="grid">
+      <div class="card"><div class="h">📊 廠商管理看板</div><p>新增/更新合作廠商資料，填寫服務專員、電話、地址、NDA 狀態、維護合約期間，並可上傳 NDA 與採購合約電子檔。</p></div>
+      <div class="card"><div class="h">✏️ 廠商資料維護</div><p>先用關鍵字搜尋廠商，再修改基本資料、增補或刪除隨附文件，或徹底註銷廠商。</p></div>
+      <div class="card"><div class="h">🗂️ 廠商維護歷程看板</div><p>記錄每次設備維護（日期、設備、類型、費用、簽收、內容），可歸檔維護單據，並匯出單一廠商維護歷程。</p></div>
+      <div class="card"><div class="h">📝 新增廠商維護紀錄</div><p>選擇廠商與維護日期，填寫維護內容與費用，上傳單據後儲存。</p></div>
+    </div>
+    <ul class="steps">
+      <li>到「廠商管理看板」填寫廠商資料（公司名稱為必填），可一併選取 NDA/合約檔案。</li>
+      <li>按「💾 儲存廠商資料」，下方名冊會即時更新。</li>
+      <li>要修改或刪除，改用「廠商資料維護」：輸入關鍵字 → 選取 → 修改 → 儲存。</li>
+      <li>維護紀錄請到「廠商維護歷程看板 / 新增廠商維護紀錄」登錄。</li>
+    </ul>
+    <div class="tip info"><span class="ico">💡</span><div>廠商相關操作使用「站內提示」與「站內確認視窗」，不會跳出會卡住畫面的系統對話框。</div></div>
+  </section>
+
+  <section id="recycle">
+    <h2><span class="num">8</span>🗑️ 資源回收桶</h2>
+    <p>資產不想直接刪除時，可先「移至回收桶」（軟刪除），之後仍可還原。</p>
+    <ul class="steps">
+      <li>在總覽看板點設備名稱開啟履歷，按「🗑️ 移至回收桶」並確認。</li>
+      <li>該資產會從總覽消失，但資料仍保留在「🗑️ 資源回收桶」。</li>
+      <li>若誤刪，到資源回收桶按「🔄 還原」，資產會回到總覽看板。</li>
+    </ul>
+    <div class="tip warn"><span class="ico">⚠️</span><div>回收桶是「隱藏」而非永久刪除；但從回收桶還原前，請確認沒有重複建立同一台設備。</div></div>
+  </section>
+
+  <section id="system">
+    <h2><span class="num">9</span>⚙️ 系統管理</h2>
+    <h3>🗄️ 資料庫備份</h3>
+    <ul>
+      <li><b>📦 資訊資產資料備份</b>：只備份資產相關資料。</li>
+      <li><b>🏢 廠商資訊資料備份</b>：只備份廠商相關資料。</li>
+      <li><b>💾 全備份</b>：備份所有資料表（建議定期執行）。</li>
+      <li><b>📎 附件檔備份</b>：將 uploads 內的 NDA/合約/維護單據打包成 zip。</li>
+    </ul>
+    <h3>♻️ 資料庫還原</h3>
+    <p>選擇對應的備份檔還原。系統會先自動建立「還原前備份」作為保險，再以備份內容覆蓋。</p>
+    <h3>🔄 版本更新</h3>
+    <ol>
+      <li>按「🔍 檢查最新版本」連線更新伺服器讀取 <code>latest.json</code>。</li>
+      <li>若有新版，按「⬇️ 下載更新檔」下載並驗證 SHA256。</li>
+      <li>按「🚀 安裝並重新啟動」進行安裝（安裝前會自動全備份）。</li>
+    </ol>
+    <h3>📥 匯入資料表</h3>
+    <p>可用 Excel 範本批次匯入資產或廠商資料；匯入前會先顯示「新增/更新/略過/失敗」統計，再次確認後才寫入。</p>
+    <div class="tip warn"><span class="ico">⚠️</span><div>「還原」會覆蓋目前資料，務必先確認備份檔正確。重大操作前建議先做一次「💾 全備份」。</div></div>
+  </section>
+  <section id="field-manage">
+    <h2><span class="num">10</span>🧩 欄位管理</h2>
+    <p>位置：<b>⚙️ 系統管理 → 🧩 欄位管理</b>（系統管理的第一項）。可自行新增／移除「<b>資產大類</b>」與「<b>所屬部門</b>」的選項，讓不同產業（醫院、學校、公司…）都能使用自己的分類。</p>
+    <div class="tip info"><span class="ico">💡</span><div>可自行新增／移除「資產大類」「所屬部門」選項；<b>名稱可中文</b>、<b>代號請用英數（1~8 碼）</b>，代號會用於資產編號（例：HW、MON、IT）。</div></div>
+    <h3>➕ 新增選項</h3>
+    <ul class="steps">
+      <li>左側清單是「<b>🏷️ 資產大類</b>」，右側是「<b>🏢 所屬部門</b>」，兩邊操作方式相同。</li>
+      <li>在「<b>名稱（可中文）</b>」輸入要顯示的文字，例如 <code>監視器</code>、<code>放射科</code>。</li>
+      <li>在「<b>代號（英數）</b>」輸入 1~8 碼英文或數字，例如 <code>MON</code>、<code>RD</code>（系統會自動轉大寫）。</li>
+      <li>按「<b>➕ 新增</b>」，右下角出現成功提示，清單與所有下拉選單立即更新（新選項排在清單最後）。</li>
+    </ul>
+    <h3>🗑️ 刪除選項</h3>
+    <ul class="steps">
+      <li>在清單右側按「<b>🗑️ 刪除</b>」，於確認視窗按確定即可移除。</li>
+      <li>刪除後，該選項會從「新增資產／編輯資產／資產轉移」的下拉選單中消失。</li>
+      <li>已建立的資產<b>不會</b>被修改或刪除，其原本的大類／部門與資產編號都維持不變。</li>
+    </ul>
+    <h3>代號的用途（重要）</h3>
+    <table>
+      <tr><th>用途</th><th>說明</th></tr>
+      <tr><td>資產編號</td><td>大類代號 + 部門代號 + 建檔日期 + 流水號，例如 <code>MON-IT-20261029-0001</code></td></tr>
+      <tr><td>轉移改號</td><td>跨部門轉移時，系統會用新部門的代號重新組成編號</td></tr>
+      <tr><td>匯出／履歷</td><td>匯出的 Excel 以「名稱 (代號)」呈現，例如 <code>監視器 (MON)</code></td></tr>
+    </table>
+    <div class="tip warn"><span class="ico">⚠️</span><div>代號必須是 <b>1~8 碼英文或數字</b>，<b>不可使用中文、空白或符號</b>，且同一類別內<b>不可重複</b>；建議用看得懂意思的短代碼（例：<code>NB</code> 筆電、<code>PRN</code> 印表機）。</div></div>
+    <div class="tip info"><span class="ico">ℹ️</span><div>清單固定高度、可上下捲動（表頭固定）。目前尚無「修改」功能，若要調整既有選項，請先刪除再新增一筆；既有資產資料不受影響。</div></div>
+  </section>
+
+  <section id="numbering">
+    <h2><span class="num">11</span>🔢 資產編號規則</h2>
+    <p>格式：<code>類別 - 部門代號 - 建檔日期 - 流水號</code>，例如 <code>NET-IT-20261029-0001</code>（資訊部門的網路設備）。</p>
+    <h3>類別代碼</h3>
+    <table>
+      <tr><th>資產大類</th><th>代碼</th><th>範例</th></tr>
+      <tr><td>硬體設備</td><td>HW</td><td><code>HW-IT-20261029-0001</code></td></tr>
+      <tr><td>軟體授權</td><td>SW</td><td><code>SW-IT-20261029-0001</code></td></tr>
+      <tr><td>網路設備</td><td>NET</td><td><code>NET-IT-20261029-0001</code></td></tr>
+      <tr><td>資訊周邊</td><td>DEV</td><td><code>DEV-IT-20261029-0001</code></td></tr>
+      <tr><td>帳密安全性</td><td>SEC</td><td><code>SEC-IT-20261029-0001</code></td></tr>
+    </table>
+    <h3>部門代碼</h3>
+    <p style="display:flex;flex-wrap:wrap;gap:6px;">
+      <span class="pill blue">IT 資訊部門</span><span class="pill blue">DR 院長室,醫師辦公室</span><span class="pill blue">TL 督導</span>
+      <span class="pill blue">GA 總務</span><span class="pill blue">MO 行政</span><span class="pill blue">PT 主任</span>
+      <span class="pill blue">AC 人事,會計</span><span class="pill blue">CK 廚房</span><span class="pill blue">SM 倉庫</span>
+      <span class="pill blue">WO 工務</span><span class="pill blue">LA 檢驗室</span><span class="pill blue">OP 婦科</span>
+      <span class="pill blue">IN 兒科</span><span class="pill blue">PO 警衛</span><span class="pill blue">OR 產房</span>
+      <span class="pill blue">WA 病房</span><span class="pill blue">HE 申報</span><span class="pill blue">BR 嬰兒室</span>
+      <span class="pill blue">CH 病歷室</span><span class="pill blue">CO 櫃台</span><span class="pill blue">P1 藥局</span>
+    </p>
+    <div class="tip info"><span class="ico">💡</span><div>上表的類別代碼與部門代碼為<b>預設值</b>，可到「⚙️ 系統管理 → 🧩 欄位管理」自行新增或移除；該處設定的<b>代號</b>就是編號中使用的代碼。</div></div>
+    <h3>流水號</h3>
+    <ul>
+      <li>依「<b>同類別 + 同部門</b>」自動遞增（取現有最大流水號 +1），不受建檔日期影響。</li>
+      <li>例如同為資訊部門的硬體設備：<code>HW-IT-…-0001</code>、<code>HW-IT-…-0002</code>、<code>HW-IT-…-0003</code>。</li>
+      <li>編號由系統自動產生且<b>唯讀</b>，建立後不可手動修改；轉移時若跨部門會自動重新編號。</li>
+    </ul>
+    <div class="tip info"><span class="ico">💡</span><div>建檔日期為「建立當天」，流水號在「同類別+同部門」內保證唯一且遞增。</div></div>
+  </section>
+
+  <section id="export">
+    <h2><span class="num">12</span>📥 匯出與條碼貼紙</h2>
+    <h3>匯出 Excel 盤點總表（全部資產）</h3>
+    <ul class="steps">
+      <li>到「📊 總覽看板首頁」，點右上角「📥 匯出 Excel 盤點總表」。</li>
+      <li>選擇儲存位置，系統會匯出所有資產的完整盤點表。</li>
+      <li>最後一欄為「資產條碼 (貼紙)」：上方顯示資產編號，下方為 Code 128 一維條碼。</li>
+      <li>列印貼紙時建議將縮放設為 <b>100%</b>，以確保條碼清晰可掃。</li>
+    </ul>
+    <h3>匯出單筆資產履歷</h3>
+    <p>在資產履歷彈窗按「📤 匯出資產履歷」，會產出三個工作表：<b>資產基本資料</b>、<b>維修紀錄</b>、<b>轉移紀錄</b>。</p>
+    <div class="tip ok"><span class="ico">✅</span><div>盤點總表的條碼採用「隨儲存格移動及縮放」錨定，<b>用「部門」欄篩選時，條碼會跟著對應列一起隱藏/對齊</b>，不會錯位。</div></div>
+    <div class="tip warn"><span class="ico">⚠️</span><div>請使用最新版程式重新匯出；舊檔的條碼錨定方式不同，篩選後可能位移。</div></div>
+  </section>
+
+  <section id="faq">
+    <h2><span class="num">13</span>❓ 常見問題</h2>
+    <h3>Q1：按「確認登記」後，為什麼右下角只出現提示、沒有彈出視窗？</h3>
+    <p>本系統改用「站內浮動提示」取代系統對話框，避免視窗卡住，屬正常行為。</p>
+    <h3>Q2：轉移後編號沒有改變？</h3>
+    <p>因為「轉移後部門」選了與目前相同部門。系統只有在<b>部門改變</b>時才重新編號；若要改號，請選擇不同部門（表單下方會有即時提示）。</p>
+    <h3>Q3：資產維修中，為什麼不能改維運狀態？</h3>
+    <p>為避免與維修週期衝突，維修中的資產在編輯時狀態會被鎖定；到「資訊資產維修」把工單標記完工後即可恢復。</p>
+    <h3>Q4：資產不小心刪除了怎麼辦？</h3>
+    <p>到「🗑️ 資源回收桶」找到該資產，按「🔄 還原」即可。</p>
+    <h3>Q5：如何備份與還原資料？</h3>
+    <p>「⚙️ 系統管理 → 🗄️ 資料庫備份」定期做全備份；需要時用「♻️ 資料庫還原」選擇備份檔還原。</p>
+    <h3>Q6：條碼貼紙列印出來模糊或掃不到？</h3>
+    <p>列印時縮放請設 100%、使用雷射印表機、避免過度縮小；貼紙裁切時請保留條碼左右空白區。</p>
+    <h3>Q7：新增資產時，選單裡找不到我要的大類或部門？</h3>
+    <p>請先到「⚙️ 系統管理 → 🧩 欄位管理」新增該選項（填「名稱」與「英數代號」），按「➕ 新增」後，新增資產／編輯資產／轉移的下拉選單會立即出現該選項。</p>
+    <div class="tip info"><span class="ico">📮</span><div>若操作上還有疑問，歡迎來信 <b>kevin7563@gmail.com</b>。</div></div>
+  </section>
+</div>
+<footer>
+  IT 資產管理系統操作說明　｜　系統開發：Kevin Chang　｜　版權所有，盜版必究
+</footer>
+</body>
+</html>

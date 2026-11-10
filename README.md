@@ -1,0 +1,131 @@
+# IT 資產管理系統（IT Asset Manager）
+
+以 **Electron + SQLite** 打造的公司內部 IT 資產管理桌面應用程式（Windows）。
+提供資產建檔、維修、移轉、盤點貼紙（QR Code / Code-128 條碼）、廠商管理與 Excel 匯出等功能，
+所有資料保存在本機，不需連線即可使用。
+
+- 目前版本：**v1.2.1**
+- 系統開發：Kevin Chang
+- 開發日期：2026.10.15（最近更新：2026.10.29）
+- 聯絡信箱：kevin7563@gmail.com
+
+---
+
+## ✨ 功能特色
+
+| 模組 | 說明 |
+| --- | --- |
+| 🗂️ 資產管理 | 新增／編輯／刪除資產，資產編號自動產生：`類別-部門-建檔日期-流水號` |
+| ✏️ 資產編輯 | 可修改 7 個欄位，其餘欄位（編號、建檔日等）鎖定以維持資料一致性 |
+| 🔧 維修管理 | 送修／完修登記，記錄維修廠商、費用、狀態 |
+| 🔁 資產移轉 | 部門／使用人移轉紀錄，完整保留移轉歷程 |
+| 📜 資產履歷 | 單一資產的維修週期 + 移轉紀錄整合檢視，可匯出 Excel |
+| 🖨️ 盤點貼紙 | 匯出盤點總表，附 QR Code 與 Code-128 條碼（TwoCell 錨定，不變形） |
+| 🏢 廠商管理 | 廠商建檔、維護歷程、清單匯出 |
+| 🧩 欄位管理 | 自訂「資產大類／所屬部門」（名稱中文、代號英數 1~8 碼），即時套用至編號、下拉選單與匯出 |
+| 🔄 版本更新 | 內建檢查更新、下載與安裝（讀取 `latest.json`） |
+| 💾 資料備份 | 資料庫與附件可自訂儲存位置，支援舊資料搬移 |
+
+---
+
+## 🧱 技術架構
+
+- **Electron 32.3.3**（主程序 `main.js` + 單頁前端 `index.html`）
+- **SQLite**：`sqlite3` 本機資料庫（`assets_new`、`vendors_new`、`repairs_new`、`transfers_new`、`asset_history_new`、`field_options`）
+- **ExcelJS**：盤點總表／履歷／廠商清單匯出（含條碼圖片）
+- **qrcode**：QR Code 產生
+- **XLSX**：匯入範本讀取
+- **electron-builder 24.13.3**：NSIS 安裝檔打包
+
+---
+
+## 🚀 開發環境
+
+### 需求
+- Node.js（建議 18 以上）
+- Windows 10 / 11
+
+### 安裝與啟動
+
+```powershell
+# 1. 安裝相依套件
+npm install
+
+# 2. 啟動開發模式
+npm start
+```
+
+### 打包安裝檔
+
+```powershell
+npm run build
+```
+
+輸出：`dist\IT資產管理系統_安裝檔_v<版本>.exe`（NSIS，約 90 MB）
+
+### 產生更新資訊（上架更新伺服器用）
+
+```powershell
+# 1. 升版號
+npm version 1.2.2 --no-git-tag-version
+
+# 2. 重新打包
+npm run build
+
+# 3. 產生 latest.json + 英文檔名安裝檔
+.\產生更新資訊.ps1 -Notes "1. 修正xxx`n2. 新增yyy"
+```
+
+上傳 `dist\latest.json` 與 `dist\ITAssetManager_Setup_v<版本>.exe` 至更新伺服器同一資料夾即可。
+
+---
+
+## 📁 專案結構
+
+```
+it-asset-manager/
+├─ main.js                 # Electron 主程序：視窗、IPC、SQLite、Excel 匯出、更新檢查
+├─ index.html              # 前端 UI（單檔：版面 + 樣式 + 前端邏輯）
+├─ help-guide.html         # 操作說明（圖文指引）
+├─ package.json            # 版本號、scripts、electron-builder 設定
+├─ 產生更新資訊.ps1        # 產生 latest.json 與上傳用安裝檔
+├─ 版本更新_上架操作說明.md
+├─ 版本更新伺服器設定說明.md
+├─ 範例_資產匯入範本.xlsx
+├─ 範例_廠商匯入範本.xlsx
+├─ 範例_盤點總表_條碼貼紙.xlsx
+├─ CHANGELOG.md            # 版本歷程
+└─ dist/                   # 打包產物（不進版控）
+```
+
+---
+
+## 💾 資料存放位置
+
+| 環境 | 資料庫 / 附件位置 |
+| --- | --- |
+| 開發模式（`npm start`） | 專案資料夾（`*.db`、`uploads/`） |
+| 安裝版 | `%APPDATA%\it-asset-manager\`（可在程式中設定自訂儲存位置） |
+
+> ⚠️ 資料庫與 `uploads/` 附件含公司與個人資料，**已在 `.gitignore` 排除，請勿上傳**。
+
+---
+
+## 🏷️ 版本管理規範
+
+- 分支：`main` 為可發行版本；功能開發使用 `feature/<名稱>`，修正使用 `fix/<名稱>`
+- 版號：語意化版號 `主版.次版.修訂`（`package.json` 為唯一來源）
+- 標籤：每次發行建立 annotated tag，例如
+  ```powershell
+  git tag -a v1.2.1 -m "IT 資產管理系統 v1.2.1"
+  git push origin main --tags
+  ```
+- 版更紀錄：每次發行同步更新 `CHANGELOG.md`
+- 提交訊息：`feat: ...` / `fix: ...` / `docs: ...` / `chore: ...`
+
+---
+
+## ⚖️ 版權
+
+© 2026 Kevin Chang · 版權所有，盜版必究。
+本專案為公司內部使用之私有軟體，未經授權請勿散布、重製或商業使用。
