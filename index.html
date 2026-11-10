@@ -177,7 +177,7 @@
         <div class="sidebar-footer">
             <div>系統開發by KevinChang</div>
             <div>Date:20261015</div>
-            <div>目前版本：<span id="app-version-label">v1.2.1</span></div>
+            <div>目前版本：<span id="app-version-label">v1.2.2</span></div>
             <div class="copyright">版權所有,盜版必究</div>
         </div>
     </div>
@@ -192,7 +192,7 @@
                 </div>
                 <div class="card">
                     <table class="asset-table" id="main-assets-table">
-                        <thead><tr><th style="width:150px;">資產編號</th><th style="width:130px;">部門</th><th>設備名稱</th><th style="width:130px;">資產大類</th><th style="width:100px;">保管窗口</th><th style="width:130px;">購買廠商</th><th style="width:100px; text-align:center;">目前狀態</th><th style="width:140px;">當前位置</th><th style="width:160px;">備註事項</th></tr></thead>
+                        <thead><tr><th style="width:150px;">資產編號</th><th style="width:130px;">部門</th><th>設備名稱</th><th style="width:130px;">資產大類</th><th style="width:100px;">保管窗口</th><th style="width:130px;">購買廠商</th><th style="width:100px; text-align:center;">目前狀態</th><th style="width:140px;">當前位置</th><th style="width:190px;">規格/備註</th><th style="width:160px;">備註事項</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>
@@ -215,6 +215,7 @@
                             <div class="form-group"><label>採購日期</label><input type="date" id="asset-purchase-date"></div>
                             <div class="form-group"><label>保固到期日</label><input type="date" id="asset-warranty-date"></div>
                             <div class="form-group form-group-full hidden" id="scrap-reason-row"><label style="color:var(--danger);">🚨 報廢原因註銷備查 (必填)</label><input type="text" id="asset-scrap-reason"></div>
+                            <div class="form-group form-group-full"><label>資產規格 / 備註</label><textarea id="asset-spec-note" rows="2" placeholder="例：i7-12700 / 32GB RAM / 1TB SSD、含 24 吋螢幕、加裝第二顆硬碟..."></textarea></div>
                             <div class="form-group form-group-full"><label>維運備註說明</label><textarea id="asset-notes" rows="3"></textarea></div>
                         </div>
                         <div style="margin-top:20px; text-align:right;"><button type="submit" class="btn btn-primary">💾 確認登記此筆資產</button></div>
@@ -1020,7 +1021,7 @@
                 assets.forEach(a => { transferList.innerHTML += `<option value="[${a.asset_no}] ${a.name}"></option>`; });
             }
             if (assets.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:40px;">📋 目前尚無資產資料。</td></tr>'; return;
+                tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:40px;">📋 目前尚無資產資料。</td></tr>'; return;
             }
             assets.forEach(item => {
                 const tr = document.createElement('tr');
@@ -1029,10 +1030,11 @@
                 const catMap = { hardware: '硬體設備(HW)', software: '軟體與授權(SW)', network: '網路設備(NET)', peripheral: '資訊周邊(DEV)', credentials: '資訊與資料庫帳密(SEC)' };
                 
                 let locationHtml = item.location ? `📍 ${item.location}` : '<span style="color:#94a3b8;">未標註</span>';
+                let specHtml = item.spec_note ? item.spec_note : '<span style="color:#94a3b8;">—</span>';
                 let notesHtml = item.notes ? item.notes : '<span style="color:#94a3b8;">—</span>';
                 if (item.status === 'scrapped' && item.scrap_reason) notesHtml += `<div style="color:var(--danger);font-size:12px;margin-top:4px;">🚨 報廢原因：${item.scrap_reason}</div>`;
 
-                tr.innerHTML = `<td class="cell-center"><strong>${item.asset_no || ''}</strong></td><td class="cell-center"><span style="color:#6d28d9;font-weight:bold;">${deptText(item.department)}</span></td><td class="cell-center"><a href="#" class="asset-click-link" style="color:var(--accent);font-weight:bold;text-decoration:none;">${item.name || ''}</a></td><td class="cell-center">${catText(item.category)}</td><td class="cell-center">${item.custodian || '<span style="color:#94a3b8;">—</span>'}</td><td class="cell-center"><span style="color:#475569;font-weight:bold;">🏢 ${vendorName}</span></td><td class="cell-center" style="text-align:center;">${statusBadge}</td><td class="cell-center">${locationHtml}</td><td class="cell-center" style="font-size:13px;">${notesHtml}</td>`;
+                tr.innerHTML = `<td class="cell-center"><strong>${item.asset_no || ''}</strong></td><td class="cell-center"><span style="color:#6d28d9;font-weight:bold;">${deptText(item.department)}</span></td><td class="cell-center"><a href="#" class="asset-click-link" style="color:var(--accent);font-weight:bold;text-decoration:none;">${item.name || ''}</a></td><td class="cell-center">${catText(item.category)}</td><td class="cell-center">${item.custodian || '<span style="color:#94a3b8;">—</span>'}</td><td class="cell-center"><span style="color:#475569;font-weight:bold;">🏢 ${vendorName}</span></td><td class="cell-center" style="text-align:center;">${statusBadge}</td><td class="cell-center">${locationHtml}</td><td class="cell-center" style="font-size:13px;">${specHtml}</td><td class="cell-center" style="font-size:13px;">${notesHtml}</td>`;
                 const aLink = tr.querySelector('.asset-click-link');
                 if (aLink) {
                     aLink.addEventListener('click', (e) => {
@@ -1058,6 +1060,7 @@
                             <div><strong>📅 購置日期：</strong>${na(item.purchase_date)}</div>
                             <div><strong>🛡️ 保固到期：</strong>${na(item.warranty_date)}</div>
                             <div style="grid-column:1/-1;background:#f8fafc;padding:8px;border-radius:4px;"><strong>📍 實體擺放地點：</strong>${na(item.location)}</div>
+                            ${item.spec_note ? `<div style="grid-column:1/-1;background:#eef2ff;padding:8px;border-radius:4px;border:1px solid #c7d2fe;"><strong>🧾 資產規格/備註：</strong>${item.spec_note}</div>` : ''}
                             ${item.notes ? `<div style="grid-column:1/-1;background:#fffbeb;padding:8px;border-radius:4px;border:1px solid #fde68a;"><strong>📝 維運備註：</strong>${item.notes}</div>` : ''}
                             ${(item.status === 'scrapped' && item.scrap_reason) ? `<div style="grid-column:1/-1;background:#fef2f2;padding:8px;border-radius:4px;border:1px solid #fecaca;color:#b91c1c;"><strong>🚨 報廢原因：</strong>${item.scrap_reason}</div>` : ''}
                         `;
@@ -1224,6 +1227,7 @@
                                 <div class="form-group"><label>採購日期</label><input type="date" id="edit-asset-purchase-date"></div>
                                 <div class="form-group"><label>保固到期日</label><input type="date" id="edit-asset-warranty-date"></div>
                                 <div class="form-group form-group-full hidden" id="edit-scrap-reason-row"><label style="color:var(--danger);">🚨 報廢原因註銷備查 (必填)</label><input type="text" id="edit-asset-scrap-reason"></div>
+                                <div class="form-group form-group-full"><label>資產規格 / 備註</label><textarea id="edit-asset-spec-note" rows="2" placeholder="例：i7-12700 / 32GB RAM / 1TB SSD、含 24 吋螢幕..."></textarea></div>
                                 <div class="form-group form-group-full"><label>維運備註說明</label><textarea id="edit-asset-notes" rows="3"></textarea></div>
                             </div>
                             <div style="margin-top:20px; text-align:right; display:flex; gap:10px; justify-content:flex-end;">
@@ -1268,6 +1272,7 @@
                         location: document.getElementById('edit-asset-location').value.trim(), vendor_id: parseInt(document.getElementById('edit-asset-vendor-id').value) || 0,
                         status: status, purchase_date: document.getElementById('edit-asset-purchase-date').value,
                         warranty_date: document.getElementById('edit-asset-warranty-date').value, scrap_reason: scrapReason,
+                        spec_note: document.getElementById('edit-asset-spec-note').value.trim(),
                         notes: document.getElementById('edit-asset-notes').value.trim()
                     });
                     document.getElementById('asset-edit-modal').classList.add('hidden');
@@ -1321,6 +1326,7 @@
             document.getElementById('edit-asset-purchase-date').value = item.purchase_date || '';
             document.getElementById('edit-asset-warranty-date').value = item.warranty_date || '';
             document.getElementById('edit-asset-scrap-reason').value = item.scrap_reason || '';
+            document.getElementById('edit-asset-spec-note').value = item.spec_note || '';
             document.getElementById('edit-asset-notes').value = item.notes || '';
             document.getElementById('edit-asset-vendor-id').value = String(item.vendor_id || 0);
             toggleEditScrapReasonEngine();
@@ -2327,6 +2333,7 @@
                     purchase_date: document.getElementById('asset-purchase-date').value,
                     warranty_date: document.getElementById('asset-warranty-date').value,
                     scrap_reason: scrapReason,
+                    spec_note: document.getElementById('asset-spec-note').value.trim(),
                     notes: document.getElementById('asset-notes').value.trim()
                 });
                 showVendorToast(`💾 資產 [ ${assetNo} ] 已成功登記入庫！`, 'ok');

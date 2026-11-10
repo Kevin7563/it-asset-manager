@@ -145,7 +145,7 @@ async function initDatabase() {
 async function upgradeDatabaseTables() {
     try {
         // 使用全然獨立、完美相容 8 欄位隨附多檔的全新結構資料表！
-        await db.execute(`CREATE TABLE IF NOT EXISTS assets_new (id INTEGER PRIMARY KEY AUTOINCREMENT, asset_no TEXT UNIQUE, name TEXT, category TEXT, sn TEXT, custodian TEXT, location TEXT, vendor_id INTEGER DEFAULT 0, status TEXT, purchase_date TEXT, warranty_date TEXT, scrap_reason TEXT, notes TEXT, is_deleted INTEGER DEFAULT 0)`);
+        await db.execute(`CREATE TABLE IF NOT EXISTS assets_new (id INTEGER PRIMARY KEY AUTOINCREMENT, asset_no TEXT UNIQUE, name TEXT, category TEXT, sn TEXT, custodian TEXT, location TEXT, vendor_id INTEGER DEFAULT 0, status TEXT, purchase_date TEXT, warranty_date TEXT, scrap_reason TEXT, spec_note TEXT, notes TEXT, is_deleted INTEGER DEFAULT 0)`);
         await db.execute(`CREATE TABLE IF NOT EXISTS vendors_new (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, representative TEXT, phone TEXT, address TEXT, has_nda INTEGER DEFAULT 0, service_items TEXT, nda_files TEXT, contract_files TEXT, maint_start TEXT, maint_end TEXT)`);
         // 🔧 相容升級：既有資料庫自動補上「維護合約開始日 / 截止日」欄位 (不會影響原有資料)
         const vColRes = await db.execute(`SELECT name FROM pragma_table_info('vendors_new')`);
@@ -164,6 +164,8 @@ async function upgradeDatabaseTables() {
         const aColRes = await db.execute(`SELECT name FROM pragma_table_info('assets_new')`);
         const aColNames = (aColRes.rows || []).map(c => c.name);
         if (aColNames.indexOf('department') < 0) await db.execute(`ALTER TABLE assets_new ADD COLUMN department TEXT DEFAULT 'IT'`);
+        // 🧾 相容升級：既有資料庫自動補上「資產規格/備註」欄位 (不影響原有資料)
+        if (aColNames.indexOf('spec_note') < 0) await db.execute(`ALTER TABLE assets_new ADD COLUMN spec_note TEXT`);
         const tColRes = await db.execute(`SELECT name FROM pragma_table_info('transfers_new')`);
         const tColNames = (tColRes.rows || []).map(c => c.name);
         if (tColNames.indexOf('from_department') < 0) await db.execute(`ALTER TABLE transfers_new ADD COLUMN from_department TEXT`);
@@ -315,8 +317,8 @@ ipcMain.on('save-asset', async (event, a) => {
         const check = await db.execute({ sql: `SELECT id FROM assets_new WHERE asset_no = ?`, args: [a.asset_no] });
         if (check && check.rows && check.rows.length > 0) {
             const existingId = check.rows[0].id;
-            const sqlUpdate = `UPDATE assets_new SET name=?, category=?, sn=?, custodian=?, location=?, vendor_id=?, status=?, purchase_date=?, warranty_date=?, scrap_reason=?, notes=?, department = COALESCE(NULLIF(?, ''), department), is_deleted=0 WHERE asset_no=?`;
-            await db.execute({ sql: sqlUpdate, args: [a.name, a.category, a.sn, a.custodian, a.location, a.vendor_id, a.status, a.purchase_date, a.warranty_date, a.scrap_reason, a.notes, a.department || '', a.asset_no] });
+            const sqlUpdate = `UPDATE assets_new SET name=?, category=?, sn=?, custodian=?, location=?, vendor_id=?, status=?, purchase_date=?, warranty_date=?, scrap_reason=?, spec_note=?, notes=?, department = COALESCE(NULLIF(?, ''), department), is_deleted=0 WHERE asset_no=?`;
+            await db.execute({ sql: sqlUpdate, args: [a.name, a.category, a.sn, a.custodian, a.location, a.vendor_id, a.status, a.purchase_date, a.warranty_date, a.scrap_reason, a.spec_note || '', a.notes, a.department || '', a.asset_no] });
             await logAssetHistory(existingId, a.asset_no, 'edit', '資產資料編輯修改', `設備名稱:${a.name} ｜ 狀態:${a.status}`);
             if (a.status === 'scrapped') {
                 await logAssetHistory(existingId, a.asset_no, 'scrap', '資產報廢註銷', `報廢原因:${a.scrap_reason || '未填寫'}`);
@@ -325,8 +327,8 @@ ipcMain.on('save-asset', async (event, a) => {
                 await db.execute({ sql: `UPDATE repairs_new SET status = 'scrapped', completed_date = ? WHERE asset_id = ? AND status = 'pending'`, args: [scrapToday, existingId] });
             }
         } else {
-            const sqlInsert = `INSERT INTO assets_new (asset_no, name, category, sn, custodian, location, vendor_id, status, purchase_date, warranty_date, scrap_reason, notes, department, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`;
-            await db.execute({ sql: sqlInsert, args: [a.asset_no, a.name, a.category, a.sn, a.custodian, a.location, a.vendor_id, a.status, a.purchase_date, a.warranty_date, a.scrap_reason, a.notes, a.department || 'IT'] });
+            const sqlInsert = `INSERT INTO assets_new (asset_no, name, category, sn, custodian, location, vendor_id, status, purchase_date, warranty_date, scrap_reason, spec_note, notes, department, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`;
+            await db.execute({ sql: sqlInsert, args: [a.asset_no, a.name, a.category, a.sn, a.custodian, a.location, a.vendor_id, a.status, a.purchase_date, a.warranty_date, a.scrap_reason, a.spec_note || '', a.notes, a.department || 'IT'] });
             const idRes = await db.execute({ sql: `SELECT id FROM assets_new WHERE asset_no = ?`, args: [a.asset_no] });
             const newId = (idRes && idRes.rows && idRes.rows.length > 0) ? idRes.rows[0].id : 0;
             await logAssetHistory(newId, a.asset_no, 'create', '資產建立登記', `設備名稱:${a.name} ｜ 大類:${a.category}`);
@@ -696,6 +698,7 @@ ipcMain.on('export-asset-history', async (event, data) => {
         const sec2Row = 5 + infoRows.length;
         sectionBar(s1, sec2Row, S1_LAST, '【二、維運備註與報廢資訊】');
         const noteRows = [
+            ['資產規格/備註', asset.spec_note || '無'],
             ['維運備註', asset.notes || '無'],
             ['報廢原因', (asset.status === 'scrapped') ? (asset.scrap_reason || '未填寫') : '—']
         ];
@@ -703,7 +706,10 @@ ipcMain.on('export-asset-history', async (event, data) => {
             const r = sec2Row + 1 + i;
             s1.mergeCells(r, 2, r, S1_LAST);
             const rowObj = s1.getRow(r);
-            rowObj.height = 24;
+            // 🧾 規格/備註可能較長：依字數自動加高列高（避免內容被截斷）
+            const noteTxt = String(row[1] == null ? '' : row[1]);
+            const noteLines = Math.max(1, Math.ceil(noteTxt.length / 38));
+            rowObj.height = Math.max(24, Math.min(150, noteLines * 16 + 10));
             rowObj.getCell(1).border = thinBorder();
             labelCell(rowObj.getCell(1), row[0]);
             rowObj.getCell(2).border = thinBorder();
@@ -1008,6 +1014,7 @@ ipcMain.on('export-inventory-excel', async () => {
             { header: '維修次數', width: 10 },
             { header: '待修中', width: 9 },
             { header: '轉移次數', width: 10 },
+            { header: '資產規格/備註', width: 34 },
             { header: '備註事項', width: 30 },
             { header: '資產條碼 (貼紙)', width: 30 }
         ];
@@ -1048,7 +1055,7 @@ ipcMain.on('export-inventory-excel', async () => {
 
         // 🏷️ 貼紙欄排版設定：上方顯示資產編號（文字）、下方顯示一維條碼（圖片）
         const DATA_ROW_HEIGHT = 82;                          // 資料列高 (pt)
-        const STICKER_COL = 16;                              // 0-based 欄索引 = 資產條碼貼紙欄
+        const STICKER_COL = 17;                              // 0-based 欄索引 = 資產條碼貼紙欄
         const STICKER_IMG_W = 200;                           // 條碼顯示寬度 (px) ≈ 5.3cm（足夠列印掃描）
         const STICKER_IMG_H = 60;                            // 條碼顯示高度 (px) ≈ 1.6cm
         const STICKER_ROW_PX = DATA_ROW_HEIGHT * 96 / 72;    // 資料列高換算為像素
@@ -1066,7 +1073,7 @@ ipcMain.on('export-inventory-excel', async () => {
                 i + 1, a.asset_no || '', deptDisplay(a), a.name || '', catNameMap[a.category] || a.category || '',
                 a.sn || '—', a.custodian || '—', a.location || '—', a.vendor_name || '其他 (預設)',
                 statusNameMap[a.status] || a.status || '', fmtD(a.purchase_date), fmtD(a.warranty_date),
-                rep.total, rep.pending, trCnt, notesVal, a.asset_no || ''
+                rep.total, rep.pending, trCnt, (a.spec_note || '—'), notesVal, a.asset_no || ''
             ];
             vals.forEach((v, c) => {
                 const cell = row.getCell(c + 1);
@@ -1074,7 +1081,7 @@ ipcMain.on('export-inventory-excel', async () => {
                 cell.border = thinBorder();
                 cell.font = { size: 10 };
                 const numeric = (c === 0 || c === 12 || c === 13 || c === 14);
-                const leftAlign = (c === 3 || c === 15);
+                const leftAlign = (c === 3 || c === 15 || c === 16);
                 cell.alignment = { horizontal: numeric ? 'center' : (leftAlign ? 'left' : 'center'), vertical: 'middle', wrapText: leftAlign, indent: leftAlign ? 1 : 0 };
                 if (i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: CLR.zebra } };
             });
@@ -1084,7 +1091,7 @@ ipcMain.on('export-inventory-excel', async () => {
             const sCell = row.getCell(10);
             const ss = statusStyleMap[a.status];
             if (ss) { sCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ss.bg } }; sCell.font = { size: 10, bold: true, color: { argb: ss.fc } }; }
-            if (a.status === 'scrapped' && a.scrap_reason) row.getCell(16).font = { size: 10, color: { argb: 'FFB91C1C' } };
+            if (a.status === 'scrapped' && a.scrap_reason) row.getCell(17).font = { size: 10, color: { argb: 'FFB91C1C' } };
             if (rep.pending > 0) row.getCell(14).font = { size: 10, bold: true, color: { argb: 'FFB45309' } };
             // 🏷️ 貼紙欄：上方顯示資產編號（文字）、下方嵌合一維條碼圖片（寬約 5.3cm）
             const stickerCell = row.getCell(STICKER_COL + 1);
@@ -1562,9 +1569,9 @@ function showVersionWindow() {
         <ul>
         <li><span class="k">系統開發</span><span class="v">Kevin Chang</span></li>
         <li><span class="k">開發日期</span><span class="v">2026.10.15</span></li>
-        <li><span class="k">更新日期</span><span class="v">2026.10.29</span></li>
+        <li><span class="k">更新日期</span><span class="v">2026.11.10</span></li>
         <li><span class="k">目前版本</span><span class="v"><span class="ver">v${ver}</span></span></li>
-        <li><span class="k">本次更新</span><span class="v">新增「🧩 欄位管理」：可自訂資產大類／所屬部門，新增或刪除後立即套用至資產編號、下拉選單與 Excel 匯出；左側選單改為點整列展開；操作說明新增欄位管理章節。</span></li>
+        <li><span class="k">本次更新</span><span class="v">新增「🧾 資產規格 / 備註」欄位：可記錄設備規格與補充資訊，同步顯示於總覽表格、資產履歷、盤點總表與匯入範本；既有資料庫啟動時自動升級，原資料完整保留。</span></li>
         <li><span class="k">聯絡信箱</span><span class="v"><a class="mail" href="mailto:kevin7563@gmail.com">kevin7563@gmail.com</a></span></li>
         <li><span class="k">版權宣告</span><span class="v">版權所有，盜版必究</span></li>
         </ul>
@@ -2869,6 +2876,7 @@ const IMP_ASSET_FIELDS = [
     { header: '採購日期', key: 'purchase_date', width: 16, note: '格式 2026/09/29 或 2026-09-29', alias: ['購買日期'] },
     { header: '保固到期日', key: 'warranty_date', width: 16, note: '格式 2026/09/29 或 2026-09-29', alias: ['保固到期', '保固期限'] },
     { header: '報廢原因', key: 'scrap_reason', width: 22, note: '狀態為「已報廢」時建議填寫', alias: ['報廢原因註銷備查'] },
+    { header: '資產規格/備註', key: 'spec_note', width: 32, note: '選填：規格、型號、擴充配備等補充說明（會顯示於總覽、履歷與盤點總表）', alias: ['資產規格', '規格', '規格備註', '規格說明', 'spec'] },
     { header: '維運備註說明', key: 'notes', width: 30, note: '資產編號由系統自動產生，不需填寫', alias: ['備註事項', '備註', '說明'] }
 ];
 const IMP_VENDOR_FIELDS = [
@@ -2994,7 +3002,7 @@ const IMP_FIELD_FORMAT_HINT = () => ({
 const IMP_FIELD_EXAMPLE = () => ({
     asset_no: 'IT-HW-20261015-0001', name: 'ASUS 商用電腦', category: '硬體設備 (HW)', sn: 'SN12345678',
     custodian: 'kevin', location: 'B2', vendor_name: '聯強國際', status: '線上正常使用',
-    purchase_date: '2026/09/29', warranty_date: '2029/09/29', scrap_reason: '', notes: '資產貼紙已張貼',
+    purchase_date: '2026/09/29', warranty_date: '2029/09/29', scrap_reason: '', spec_note: 'i7-12700 / 32GB RAM / 1TB SSD / 含 24 吋螢幕', notes: '資產貼紙已張貼',
     representative: '張工程師', phone: '02-2508-1234', address: '台北市中山區民生東路三段 2 號', has_nda: '已簽署',
     service_items: '伺服器與網路設備維護', maint_start: '2026/01/01', maint_end: '2026/12/31'
 });
@@ -3240,6 +3248,7 @@ async function impImportAssets(filePath, dryRun) {
         const custodian = String(f.custodian == null ? '' : f.custodian).trim();
         const location = String(f.location == null ? '' : f.location).trim();
         const notes = String(f.notes == null ? '' : f.notes).trim();
+        const specNote = String(f.spec_note == null ? '' : f.spec_note).trim();
         const scrapReason = String(f.scrap_reason == null ? '' : f.scrap_reason).trim();
         if (status === 'scrapped' && scrapReason === '') plan.warnings.push({ row: rowNo, message: '狀態為「已報廢」但未填寫報廢原因' });
         const vName = String(f.vendor_name == null ? '' : f.vendor_name).trim();
@@ -3262,7 +3271,7 @@ async function impImportAssets(filePath, dryRun) {
         let newNo = '';
         if (!dryRun) {
             newNo = await impNextAssetNo(category, impTodayStamp());
-            await db.execute({ sql: `INSERT INTO assets_new (asset_no, name, category, sn, custodian, location, vendor_id, status, purchase_date, warranty_date, scrap_reason, notes, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`, args: [newNo, name, category, sn, custodian, location, vendorId, status, pDate, wDate, scrapReason, notes] });
+            await db.execute({ sql: `INSERT INTO assets_new (asset_no, name, category, sn, custodian, location, vendor_id, status, purchase_date, warranty_date, scrap_reason, spec_note, notes, is_deleted) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`, args: [newNo, name, category, sn, custodian, location, vendorId, status, pDate, wDate, scrapReason, specNote, notes] });
             const idRes = await db.execute({ sql: `SELECT id FROM assets_new WHERE asset_no = ?`, args: [newNo] });
             const newId = (idRes.rows && idRes.rows.length > 0) ? idRes.rows[0].id : 0;
             await logAssetHistory(newId, newNo, 'create', '匯入資產資料（新增）', '設備名稱:' + name + ' ｜ 大類:' + category + ' ｜ 來源檔：' + path.basename(filePath));
