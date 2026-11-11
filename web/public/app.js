@@ -653,11 +653,11 @@
                 + '<td>' + dash(v.representative) + '</td>'
                 + '<td>' + dash(v.phone) + '</td>'
                 + '<td style="text-align:center;">' + nda + '</td>'
-                + '<td style="font-size:12px;">' + vendorMaintBadge(v.maint_start, v.maint_end) + '<div class="sub" style="margin-top:3px;font-size:11.5px;">📅 ' + period + '</div></td>'
+                + '<td style="font-size:12px;">' + vendorMaintBadge(v.maint_start, v.maint_end) + '<div class="sub" style="margin-top:3px;font-size:11px;white-space:nowrap;">📅 ' + period + '</div></td>'
                 + '<td style="text-align:center;white-space:nowrap;">'
-                + '<button class="btn btn-ghost btn-sm" data-goto-edit="' + v.id + '">✏️ 維護</button> '
-                + '<button class="btn btn-primary btn-sm" data-files-vendor="' + v.id + '">📎</button> '
-                + '<button class="btn btn-danger btn-sm" data-del-vendor="' + v.id + '">🗑️</button></td>';
+                + '<button class="btn btn-primary btn-sm" data-view-vendor="' + v.id + '" title="查看廠商完整資訊與附件">🔍 檢視</button> '
+                + '<button class="btn btn-ghost btn-sm" data-goto-edit="' + v.id + '" title="帶入廠商資料維護頁">✏️ 維護</button> '
+                + '<button class="btn btn-danger btn-sm" data-del-vendor="' + v.id + '" title="刪除廠商">🗑️</button></td>';
             tbody.appendChild(tr);
         });
         tbody.querySelectorAll('[data-view-vendor]').forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); openVendorDetail(Number(a.getAttribute('data-view-vendor'))); }));
@@ -864,8 +864,8 @@
                 + '<td style="text-align:center;">' + signed + '</td>'
                 + '<td style="text-align:center;">' + docBadge + '</td>'
                 + '<td style="text-align:center;white-space:nowrap;">'
-                + '<button class="btn btn-primary btn-sm" data-maint-view="' + r.id + '">🔍 檢視</button> '
-                + '<button class="btn btn-danger btn-sm" data-del-maint="' + r.id + '">🗑️</button></td>';
+                + '<button class="btn btn-primary btn-sm" data-maint-view="' + r.id + '" title="查看維護紀錄明細與單據">🔍 檢視</button> '
+                + '<button class="btn btn-danger btn-sm" data-del-maint="' + r.id + '" title="刪除維護紀錄">🗑️</button></td>';
             tbody.appendChild(tr);
         });
         tbody.querySelectorAll('[data-maint-view]').forEach(btn => btn.addEventListener('click', () => openMaintDetail(Number(btn.getAttribute('data-maint-view')))));
