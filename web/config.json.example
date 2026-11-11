@@ -1,0 +1,6 @@
+{
+  "_comment": "複製此檔為 web/config.json 後修改；環境變數 WEB_PORT / WEB_HOST / WEB_DB 的優先順序高於此檔",
+  "port": 3010,
+  "host": "0.0.0.0",
+  "dbPath": "D:\\IT資產管理系統資料\\asset_data.db"
+}

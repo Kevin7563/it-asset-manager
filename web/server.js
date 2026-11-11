@@ -25,14 +25,23 @@ function loadConfig() {
     let fileCfg = {};
     try { fileCfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf-8')); } catch (e) {}
     const envPort = parseInt(process.env.WEB_PORT, 10);
+    const envDb = String(process.env.WEB_DB || '').trim();
+    const cfgDb = String(fileCfg.dbPath || '').trim();
+    let dbPath = '', dbSource = '';
+    if (envDb !== '') { dbPath = envDb; dbSource = 'env'; }
+    else if (cfgDb !== '') { dbPath = cfgDb; dbSource = 'config'; }
+    else { dbPath = path.join(__dirname, '..', 'uploads', 'asset_data.db'); dbSource = 'default'; }
     return {
         port: envPort || parseInt(fileCfg.port, 10) || 3010,
         host: process.env.WEB_HOST || fileCfg.host || '0.0.0.0',
-        dbPath: process.env.WEB_DB || fileCfg.dbPath || path.join(__dirname, '..', 'uploads', 'asset_data.db'),
+        dbPath: dbPath,
+        dbSource: dbSource,
         readOnly: false
     };
 }
 const CONFIG = loadConfig();
+const DEFAULT_DB_PATH = path.join(__dirname, '..', 'uploads', 'asset_data.db');
+const DB_SOURCE_LABEL = { env: '環境變數 WEB_DB', config: 'web/config.json', default: '預設（專案內 uploads）' };
 
 let db = null;
 let ctx = null;
@@ -540,11 +549,25 @@ async function requestHandler(req, res) {
 
 // ── 啟動 ────────────────────────────────────────────────
 async function start() {
-    const dbPath = path.resolve(CONFIG.dbPath);
+    let dbPath = path.resolve(CONFIG.dbPath);
     if (!fs.existsSync(dbPath)) {
         console.error('❌ 找不到資料庫檔案：' + dbPath);
-        console.error('   請先以單機版建立資料，或設定環境變數 WEB_DB 指向 asset_data.db');
-        process.exit(1);
+        console.error('   設定來源：' + (DB_SOURCE_LABEL[CONFIG.dbSource] || CONFIG.dbSource));
+        const fallback = path.resolve(DEFAULT_DB_PATH);
+        if (process.env.WEB_DB_STRICT !== '1' && CONFIG.dbSource !== 'default' && fs.existsSync(fallback)) {
+            console.warn('⚠️ 已自動改用預設資料庫：' + fallback);
+            console.warn('   （若這是先前測試留下的設定，可清除環境變數：Remove-Item Env:WEB_DB）');
+            console.warn('   （若要強制使用上方指定路徑，請設定 WEB_DB_STRICT=1）');
+            CONFIG.dbPath = fallback;
+            CONFIG.dbSource = 'default';
+            dbPath = fallback;
+        } else {
+            console.error('   請確認檔案存在，或設定環境變數 WEB_DB 指向正確的 asset_data.db');
+            console.error('   例：$env:WEB_DB = "D:\\IT資產管理系統資料\\asset_data.db"');
+            console.error('   若這是先前的測試路徑，請清除：Remove-Item Env:WEB_DB');
+            console.error('   預設資料庫位置：' + fallback + '（' + (fs.existsSync(fallback) ? '存在' : '不存在') + '）');
+            process.exit(1);
+        }
     }
     db = await dbLib.openDb(dbPath, { readOnly: false });
     ctx = dbLib.makeCtx(db);
@@ -563,7 +586,7 @@ async function start() {
         console.log('  ' + APP_NAME + ' — Web 版（完整功能）v' + APP_VERSION);
         console.log('  本機網址：http://localhost:' + CONFIG.port);
         console.log('  區網網址：http://<本機IP>:' + CONFIG.port);
-        console.log('  資料庫  ：' + dbPath + '（讀寫模式 WAL）');
+        console.log('  資料庫  ：' + dbPath + '（' + (DB_SOURCE_LABEL[CONFIG.dbSource] || CONFIG.dbSource) + '）');
         console.log('  預設帳號：admin / 5508888（管理者）、User / 1234（一般使用者）');
         console.log('  登入狀態：已載入 ' + sessionCount + ' 筆有效 Session（重啟不掉登入）');
         console.log('=========================================================');

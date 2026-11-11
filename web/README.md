@@ -204,3 +204,44 @@ nssm start ITAssetWeb
 - 附件檔存放於 `<資料庫所在資料夾>\vendor_files\`，搬家時請一併複製
 - 多台伺服器同時服務同一個資料庫（水平擴充）尚未支援；目前設計為單一伺服器
 
+---
+
+## 8. 疑難排解
+
+### ❌ 找不到資料庫檔案：C:\Users\...\Temp\...\asset_data.db
+
+代表啟動時使用的資料庫路徑指向不存在的檔案。最常見原因是**先前測試留下的 `WEB_DB` 環境變數**還指向暫存資料夾（該資料夾已被清除）。
+
+```powershell
+# 1) 查看目前設定
+$env:WEB_DB                                               # 目前視窗
+[Environment]::GetEnvironmentVariable('WEB_DB','User')    # 使用者層級
+[Environment]::GetEnvironmentVariable('WEB_DB','Machine') # 系統層級
+
+# 2) 清除（只影響目前視窗）
+Remove-Item Env:WEB_DB
+
+# 3) 重新啟動
+npm run web
+```
+
+- 若 `uploads\asset_data.db` 存在，程式會**自動退回預設資料庫**並在啟動訊息提示（設定來源顯示「預設（專案內 uploads）」）。
+- 要「路徑錯了就直接失敗、不要自動退回」，設定 `WEB_DB_STRICT=1`。
+- 要固定使用自己的資料庫，建議用 `web/config.json`（複製 `web/config.json.example`）：
+
+```json
+{ "port": 3010, "host": "0.0.0.0", "dbPath": "D:\\IT資產管理系統資料\\asset_data.db" }
+```
+
+優先順序：**環境變數 `WEB_DB` > `web/config.json` > 預設 `uploads\asset_data.db`**
+
+### 啟動訊息怎麼看
+
+```
+  資料庫  ：D:\it-asset-manager\uploads\asset_data.db（預設（專案內 uploads））
+                  ↑ 實際使用的檔案                       ↑ 這個路徑的來源
+                                                          （環境變數 WEB_DB / web/config.json / 預設）
+```
+
+若來源顯示「環境變數 WEB_DB」但路徑不是你要的，就是環境變數沒清掉。
+
