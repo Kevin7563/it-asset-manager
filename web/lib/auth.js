@@ -1,17 +1,19 @@
 // =====================================================================
 // 登入驗證與 Session（Web 版）
-//   · 密碼演算法與單機版完全相同：scrypt + 隨機 salt（讀取 app_users 表）
-//   · Session 存在伺服器記憶體（重啟即失效），以 HttpOnly Cookie 保存
+//   · 密碼：scrypt + 隨機 salt（讀取 app_users）
+//   · Session：記憶體快取 + 資料庫持久化（web_sessions），重啟不掉登入
+//   · 登入失敗 5 次鎖定該 IP 60 秒
 // =====================================================================
 const crypto = require('crypto');
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;   // 8 小時
 const COOKIE_NAME = 'itam_sid';
-const MAX_FAILS = 5;                          // 連續失敗次數上限
-const BLOCK_MS = 60 * 1000;                   // 封鎖時間 60 秒
+const MAX_FAILS = 5;
+const BLOCK_MS = 60 * 1000;
 
-const sessions = new Map();     // sid -> session
+const sessions = new Map();     // sid -> session（記憶體快取）
 const attempts = new Map();     // ip -> { count, blockedUntil }
+let store = null;               // 持久化介面（由 server 注入）
 
 const scryptHash = (password, salt) => crypto.scryptSync(String(password), String(salt), 64).toString('hex');
 
@@ -22,6 +24,24 @@ function verifyPassword(password, salt, storedHash) {
         return calc.length === stored.length && crypto.timingSafeEqual(calc, stored);
     } catch (e) { return false; }
 }
+
+// 啟動時載入未過期的 Session（由 server 在 DB 就緒後呼叫）
+async function init(sessionStore) {
+    store = sessionStore || null;
+    sessions.clear();
+    if (!store) return 0;
+    try {
+        const rows = await store.loadAll(Date.now());
+        (rows || []).forEach(r => {
+            if (!r || !r.sid) return;
+            if (Number(r.expires) <= Date.now()) return;
+            sessions.set(r.sid, r);
+        });
+    } catch (e) { /* 讀取失敗就以空 Session 啟動 */ }
+    return sessions.size;
+}
+
+async function reload() { return init(store); }
 
 function createSession(user) {
     const sid = crypto.randomBytes(32).toString('hex');
@@ -35,6 +55,7 @@ function createSession(user) {
         expires: Date.now() + SESSION_TTL_MS
     };
     sessions.set(sid, session);
+    if (store) { try { store.insert(session).catch(() => {}); } catch (e) {} }
     return session;
 }
 
@@ -56,11 +77,23 @@ function getSession(req) {
     if (!sid) return null;
     const s = sessions.get(sid);
     if (!s) return null;
-    if (s.expires < Date.now()) { sessions.delete(sid); return null; }
+    if (s.expires < Date.now()) { destroySession(sid); return null; }
     return s;
 }
 
-function destroySession(sid) { if (sid) sessions.delete(sid); }
+function destroySession(sid) {
+    if (!sid) return;
+    sessions.delete(sid);
+    if (store) { try { store.remove(sid).catch(() => {}); } catch (e) {} }
+}
+
+// 讓某個使用者的所有 Session 失效（停用／改角色／刪除帳號時）
+function invalidateUser(userId) {
+    const id = parseInt(userId, 10) || 0;
+    if (!id) return;
+    Array.from(sessions.values()).filter(s => s.id === id).forEach(s => destroySession(s.sid));
+    if (store) { try { store.removeByUser(id).catch(() => {}); } catch (e) {} }
+}
 
 function cookieHeader(sid) {
     const maxAge = Math.floor(SESSION_TTL_MS / 1000);
@@ -92,7 +125,8 @@ function remainingBlockSeconds(ip) {
 
 module.exports = {
     SESSION_TTL_MS, COOKIE_NAME,
-    verifyPassword, createSession, getSession, destroySession,
+    init, reload, verifyPassword, createSession, getSession, destroySession, invalidateUser,
     cookieHeader, clearCookieHeader, parseCookies,
     isBlocked, recordFailure, clearFailures, remainingBlockSeconds
 };
+

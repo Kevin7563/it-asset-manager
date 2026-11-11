@@ -195,6 +195,21 @@ async function handleExportInventory(res, session) {
     res.end(result.buffer);
 }
 
+// ── Session 持久化介面（web_sessions 表）────────────────
+function makeSessionStore(c) {
+    return {
+        loadAll: async (now) => {
+            try { await c.run(`DELETE FROM web_sessions WHERE expires <= ?`, [now]); } catch (e) {}
+            const rows = await c.all(`SELECT sid, user_id, username, display_name, role, created_at, expires FROM web_sessions`);
+            return rows.map(r => ({ sid: r.sid, id: r.user_id, username: r.username, displayName: r.display_name, role: r.role, createdAt: r.created_at, expires: r.expires }));
+        },
+        insert: (s) => c.run(`INSERT OR REPLACE INTO web_sessions (sid, user_id, username, display_name, role, created_at, expires) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [s.sid, s.id, s.username, s.displayName, s.role, s.createdAt, s.expires]),
+        remove: (sid) => c.run(`DELETE FROM web_sessions WHERE sid = ?`, [sid]),
+        removeByUser: (id) => c.run(`DELETE FROM web_sessions WHERE user_id = ?`, [id])
+    };
+}
+
 // ── 資料庫還原 / 重新開啟 ───────────────────────────────
 async function reopenDb() {
     const dbPath = path.resolve(CONFIG.dbPath);
@@ -203,6 +218,7 @@ async function reopenDb() {
     dbq = ctx;
     try { await ctx.exec('PRAGMA journal_mode = WAL'); } catch (e) {}
     await service.ensureSchema(ctx);
+    await auth.init(makeSessionStore(ctx));   // 重新載入（還原後同步）
 }
 
 async function handleRestoreDb(req, res, session) {
@@ -335,12 +351,25 @@ async function handleWriteApi(req, res, session, p) {
 
     // 帳號管理
     if (m === 'POST' && p === '/api/users') return ok(res, await service.createUserAccount(ctx, await body(req)));
-    if (m === 'PUT' && (mm = /^\/api\/users\/(\d+)$/.exec(p))) return ok(res, await service.updateUserAccount(ctx, mm[1], await body(req), { id: session.id }));
-    if (m === 'POST' && (mm = /^\/api\/users\/(\d+)\/password$/.exec(p))) {
-        const d = await body(req);
-        return ok(res, await service.resetUserPassword(ctx, mm[1], d.newPassword));
+    if (m === 'PUT' && (mm = /^\/api\/users\/(\d+)$/.exec(p))) {
+        const uid = parseInt(mm[1], 10);
+        const out = await service.updateUserAccount(ctx, uid, await body(req), { id: session.id });
+        if (uid !== session.id) auth.invalidateUser(uid);   // 改角色／停用 → 立即踢出該使用者
+        return ok(res, out);
     }
-    if (m === 'DELETE' && (mm = /^\/api\/users\/(\d+)$/.exec(p))) return ok(res, await service.deleteUserAccount(ctx, mm[1], { id: session.id }));
+    if (m === 'POST' && (mm = /^\/api\/users\/(\d+)\/password$/.exec(p))) {
+        const uid = parseInt(mm[1], 10);
+        const d = await body(req);
+        const out = await service.resetUserPassword(ctx, uid, d.newPassword);
+        if (uid !== session.id) auth.invalidateUser(uid);   // 重設密碼 → 舊登入失效
+        return ok(res, out);
+    }
+    if (m === 'DELETE' && (mm = /^\/api\/users\/(\d+)$/.exec(p))) {
+        const uid = parseInt(mm[1], 10);
+        const out = await service.deleteUserAccount(ctx, uid, { id: session.id });
+        auth.invalidateUser(uid);
+        return ok(res, out);
+    }
 
     // 匯入資產（Excel，base64）
     if (m === 'POST' && p === '/api/import/assets') {
@@ -386,6 +415,16 @@ async function handleWriteApi(req, res, session, p) {
     if (m === 'POST' && (mm = /^\/api\/vendor-maint\/(\d+)\/docs\/delete$/.exec(p))) {
         const d = await body(req);
         return ok(res, await service.removeMaintDoc(ctx, dataDir, mm[1], d.path));
+    }
+
+    // 編輯鎖定
+    if (m === 'POST' && p === '/api/locks/acquire') {
+        const d = await body(req);
+        return ok(res, await service.acquireLock(ctx, d.entity, d.id, session));
+    }
+    if (m === 'POST' && p === '/api/locks/release') {
+        const d = await body(req);
+        return ok(res, await service.releaseLock(ctx, d.entity, d.id, session));
     }
 
     // 資料庫還原
@@ -475,6 +514,7 @@ async function requestHandler(req, res) {
                 }
                 const mDetail = /^\/api\/assets\/(\d+)$/.exec(p);
                 if (mDetail) return ok(res, await service.getAssetDetail(ctx, mDetail[1]));
+                if (p === '/api/locks') return ok(res, { locks: await service.listLocks(ctx, parsed.searchParams.get('entity') || 'asset') });
                 return sendJson(res, 404, { ok: false, message: '找不到 API。' });
             }
 
@@ -491,8 +531,9 @@ async function requestHandler(req, res) {
         return serveStatic(req, res, p);
     } catch (err) {
         const msg = String(err && err.message ? err.message : err);
+        const status = (err && err.status) ? err.status : 500;
         console.error('[error] ' + p + ' -> ' + msg);
-        if (!res.headersSent) return sendJson(res, 500, { ok: false, message: msg });
+        if (!res.headersSent) return sendJson(res, status, { ok: false, message: msg });
         try { res.end(); } catch (e) {}
     }
 }
@@ -510,6 +551,7 @@ async function start() {
     dbq = ctx;
     try { await ctx.exec('PRAGMA journal_mode = WAL'); } catch (e) {}
     await service.ensureSchema(ctx);
+    const sessionCount = await auth.init(makeSessionStore(ctx));
 
     const server = http.createServer((req, res) => { requestHandler(req, res); });
     server.on('error', (err) => {
@@ -523,6 +565,7 @@ async function start() {
         console.log('  區網網址：http://<本機IP>:' + CONFIG.port);
         console.log('  資料庫  ：' + dbPath + '（讀寫模式 WAL）');
         console.log('  預設帳號：admin / 5508888（管理者）、User / 1234（一般使用者）');
+        console.log('  登入狀態：已載入 ' + sessionCount + ' 筆有效 Session（重啟不掉登入）');
         console.log('=========================================================');
     });
 

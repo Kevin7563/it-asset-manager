@@ -36,6 +36,10 @@ async function ensureSchema(ctx) {
     await ctx.exec(`CREATE TABLE IF NOT EXISTS vendor_maint_records (id INTEGER PRIMARY KEY AUTOINCREMENT, vendor_id INTEGER DEFAULT 0, vendor_name TEXT, maint_date TEXT, equipment TEXT, equipment_sn TEXT, maint_type TEXT, handler TEXT, cost REAL DEFAULT 0, signed INTEGER DEFAULT 0, content TEXT, notes TEXT, doc_files TEXT, created_at TEXT)`);
     await ctx.exec(`CREATE TABLE IF NOT EXISTS field_options (id INTEGER PRIMARY KEY AUTOINCREMENT, field_type TEXT, value TEXT, label TEXT, code TEXT, sort_order INTEGER DEFAULT 0, builtin INTEGER DEFAULT 0)`);
     await ctx.exec(`CREATE TABLE IF NOT EXISTS app_users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, display_name TEXT, password_hash TEXT, password_salt TEXT, role TEXT DEFAULT 'user', is_active INTEGER DEFAULT 1, created_at TEXT, last_login TEXT)`);
+    // 🔐 Session 持久化（重啟不掉登入）
+    await ctx.exec(`CREATE TABLE IF NOT EXISTS web_sessions (sid TEXT PRIMARY KEY, user_id INTEGER, username TEXT, display_name TEXT, role TEXT, created_at INTEGER, expires INTEGER)`);
+    // ✏️ 編輯鎖定（避免兩人同時編輯同一筆）
+    await ctx.exec(`CREATE TABLE IF NOT EXISTS edit_locks (entity TEXT, entity_id INTEGER, username TEXT, sid TEXT, acquired INTEGER, expires INTEGER, PRIMARY KEY (entity, entity_id))`);
 
     // 🧩 舊版資料庫相容升級
     const aCols = (await ctx.all(`SELECT name FROM pragma_table_info('assets_new')`)).map(c => c.name);
@@ -49,6 +53,9 @@ async function ensureSchema(ctx) {
     const vCols = (await ctx.all(`SELECT name FROM pragma_table_info('vendors_new')`)).map(c => c.name);
     if (vCols.indexOf('maint_start') < 0) await ctx.exec(`ALTER TABLE vendors_new ADD COLUMN maint_start TEXT`);
     if (vCols.indexOf('maint_end') < 0) await ctx.exec(`ALTER TABLE vendors_new ADD COLUMN maint_end TEXT`);
+    // ✏️ 併發編輯偵測用
+    if (aCols.indexOf('updated_at') < 0) await ctx.exec(`ALTER TABLE assets_new ADD COLUMN updated_at TEXT`);
+    if (vCols.indexOf('updated_at') < 0) await ctx.exec(`ALTER TABLE vendors_new ADD COLUMN updated_at TEXT`);
 
     // 預設選項（僅在空表時寫入）
     const catCount = await ctx.get(`SELECT COUNT(*) AS c FROM field_options WHERE field_type='category'`);
@@ -163,10 +170,10 @@ async function createAsset(ctx, data, user) {
 
     return ctx.tx(async (t) => {
         const assetNo = await nextAssetNo(t, category, department);
-        await t.run(`INSERT INTO assets_new (asset_no, name, category, sn, custodian, location, vendor_id, status, purchase_date, warranty_date, scrap_reason, spec_note, notes, department, is_deleted)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        await t.run(`INSERT INTO assets_new (asset_no, name, category, sn, custodian, location, vendor_id, status, purchase_date, warranty_date, scrap_reason, spec_note, notes, department, is_deleted, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
             [assetNo, name, category, str(data.sn), str(data.custodian), str(data.location), vendorId, status,
-                str(data.purchase_date), str(data.warranty_date), scrapReason, str(data.spec_note), str(data.notes), department]);
+                str(data.purchase_date), str(data.warranty_date), scrapReason, str(data.spec_note), str(data.notes), department, nowISO()]);
         const row = await t.get(`SELECT id FROM assets_new WHERE asset_no = ?`, [assetNo]);
         await logAssetHistory(t, row.id, assetNo, 'create', '資產建立登記',
             '設備名稱:' + name + ' ｜ 大類:' + category + ' ｜ 部門:' + department + ' ｜ 建立者:' + user.username);
@@ -186,9 +193,17 @@ async function updateAsset(ctx, id, data, user) {
     if (status === 'scrapped' && !scrapReason) throw new Error('報廢資產必須填寫報廢原因。');
     const vendorId = (data && data.vendor_id !== undefined) ? (parseInt(data.vendor_id, 10) || 0) : target.vendor_id;
 
+    // ✏️ 編輯鎖 + 併發偵測（避免兩人同時編輯）
+    await assertLockOwned(ctx, 'asset', target.id, user);
+    if (data && data.expectedUpdatedAt !== undefined && String(target.updated_at || '') !== String(data.expectedUpdatedAt || '')) {
+        const err = new Error('此資產已被其他人修改，請關閉後重新整理再編輯。');
+        err.status = 409;
+        throw err;
+    }
+
     await ctx.tx(async (t) => {
-        await t.run(`UPDATE assets_new SET name = ?, sn = ?, vendor_id = ?, status = ?, purchase_date = ?, warranty_date = ?, scrap_reason = ?, spec_note = ?, notes = ? WHERE id = ?`,
-            [name, str(data.sn), vendorId, status, str(data.purchase_date), str(data.warranty_date), scrapReason, str(data.spec_note), str(data.notes), target.id]);
+        await t.run(`UPDATE assets_new SET name = ?, sn = ?, vendor_id = ?, status = ?, purchase_date = ?, warranty_date = ?, scrap_reason = ?, spec_note = ?, notes = ?, updated_at = ? WHERE id = ?`,
+            [name, str(data.sn), vendorId, status, str(data.purchase_date), str(data.warranty_date), scrapReason, str(data.spec_note), str(data.notes), nowISO(), target.id]);
         await logAssetHistory(t, target.id, target.asset_no, 'edit', '資產資料編輯修改',
             '設備名稱:' + name + ' ｜ 狀態:' + status + ' ｜ 修改者:' + user.username);
         if (status === 'scrapped') {
@@ -197,6 +212,7 @@ async function updateAsset(ctx, id, data, user) {
             await t.run(`UPDATE repairs_new SET status = 'scrapped', completed_date = ? WHERE asset_id = ? AND status = 'pending'`, [today, target.id]);
         }
     });
+    try { await releaseLock(ctx, 'asset', target.id, user); } catch (e) {}
     return { id: target.id, asset_no: target.asset_no };
 }
 
@@ -344,16 +360,18 @@ async function saveVendor(ctx, data, user) {
         }
         const args = [str(data.representative), str(data.phone), str(data.address), (data.has_nda ? 1 : 0), str(data.service_items), str(data.maint_start), str(data.maint_end)];
         if (id) {
-            await t.run(`UPDATE vendors_new SET representative = ?, phone = ?, address = ?, has_nda = ?, service_items = ?, maint_start = ?, maint_end = ? WHERE id = ?`, args.concat([id]));
+            if (user && user.sid) await assertLockOwned(ctx, 'vendor', id, user);
+            await t.run(`UPDATE vendors_new SET representative = ?, phone = ?, address = ?, has_nda = ?, service_items = ?, maint_start = ?, maint_end = ?, updated_at = ? WHERE id = ?`, args.concat([nowISO(), id]));
             const cur = await t.get(`SELECT name FROM vendors_new WHERE id = ?`, [id]);
             if (cur && cur.name !== name) {
                 const dup = await t.get(`SELECT id FROM vendors_new WHERE name = ? AND id != ?`, [name, id]);
                 if (dup) throw new Error('廠商名稱「' + name + '」已存在。');
                 await t.run(`UPDATE vendors_new SET name = ? WHERE id = ?`, [name, id]);
             }
+            if (user && user.sid) { try { await releaseLock(ctx, 'vendor', id, user); } catch (e) {} }
             return { id: id, created: false };
         }
-        await t.run(`INSERT INTO vendors_new (name, representative, phone, address, has_nda, service_items, maint_start, maint_end) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [name].concat(args));
+        await t.run(`INSERT INTO vendors_new (name, representative, phone, address, has_nda, service_items, maint_start, maint_end, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, [name].concat(args).concat([nowISO()]));
         const row = await t.get(`SELECT id FROM vendors_new WHERE name = ?`, [name]);
         return { id: row.id, created: true };
     });
@@ -632,6 +650,48 @@ async function importAssetsFromXlsx(ctx, buffer, fileName, user) {
     return { rows: Math.max(0, ws.rowCount - headerRowNo), inserted: inserted, skipped: skipped, errors: errors, fileName: fileName };
 }
 
+// ── 編輯鎖定（避免兩人同時編輯同一筆）──────────────────
+const LOCK_TTL_MS = 10 * 60 * 1000;   // 10 分鐘未動作自動釋放
+const normEntity = (e) => (e === 'vendor') ? 'vendor' : 'asset';
+const lockErr = (holder) => { const err = new Error('🔒 此資料目前由「' + (holder || '其他人') + '」編輯中，請稍後再試。'); err.status = 409; return err; };
+
+async function acquireLock(ctx, entity, id, session) {
+    const e = normEntity(entity);
+    const eid = parseInt(id, 10) || 0;
+    if (!eid) throw new Error('缺少資料編號。');
+    const now = Date.now();
+    await ctx.run(`DELETE FROM edit_locks WHERE expires <= ?`, [now]);
+    return ctx.tx(async (t) => {
+        const cur = await t.get(`SELECT * FROM edit_locks WHERE entity = ? AND entity_id = ?`, [e, eid]);
+        if (cur && cur.sid !== session.sid) throw lockErr(cur.username);
+        const acquired = (cur && cur.acquired) ? cur.acquired : now;
+        await t.run(`INSERT OR REPLACE INTO edit_locks (entity, entity_id, username, sid, acquired, expires) VALUES (?, ?, ?, ?, ?, ?)`,
+            [e, eid, session.username, session.sid, acquired, now + LOCK_TTL_MS]);
+        return { entity: e, id: eid, username: session.username, expires: now + LOCK_TTL_MS };
+    });
+}
+
+async function releaseLock(ctx, entity, id, session) {
+    const e = normEntity(entity);
+    const eid = parseInt(id, 10) || 0;
+    if (!eid || !session || !session.sid) return { released: false };
+    const r = await ctx.run(`DELETE FROM edit_locks WHERE entity = ? AND entity_id = ? AND sid = ?`, [e, eid, session.sid]);
+    return { released: (r && r.changes) ? true : false };
+}
+
+async function listLocks(ctx, entity) {
+    await ctx.run(`DELETE FROM edit_locks WHERE expires <= ?`, [Date.now()]);
+    return ctx.all(`SELECT entity, entity_id AS id, username, acquired, expires FROM edit_locks WHERE entity = ?`, [normEntity(entity)]);
+}
+
+async function assertLockOwned(ctx, entity, id, session) {
+    const e = normEntity(entity);
+    const eid = parseInt(id, 10) || 0;
+    const cur = await ctx.get(`SELECT * FROM edit_locks WHERE entity = ? AND entity_id = ?`, [e, eid]);
+    if (cur && session && cur.sid !== session.sid) throw lockErr(cur.username);
+    return true;
+}
+
 // ── 匯入廠商（Excel）────────────────────────────────
 const IMP_VENDOR_ALIASES = {
     name: ['廠商公司名稱', '公司名稱', '廠商名稱', '廠商'],
@@ -773,6 +833,7 @@ module.exports = {
     listUsers, createUserAccount, updateUserAccount, resetUserPassword, changeOwnPassword, deleteUserAccount,
     getStats, importAssetsFromXlsx, importVendorsFromXlsx,
     addVendorFiles, removeVendorFile, addMaintDocs, removeMaintDoc,
+    acquireLock, releaseLock, listLocks, assertLockOwned,
     nextAssetNo, catCodeOf
 };
 

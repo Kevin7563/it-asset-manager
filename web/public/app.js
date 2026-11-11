@@ -29,7 +29,8 @@
         user: null, isAdmin: false,
         assets: [], vendors: [], repairs: [], transfers: [], maint: [], recycle: [], users: [],
         catOpts: [], depOpts: [], categories: {}, departments: {},
-        keyword: '', page: 'dashboard', editingAssetId: 0, editingUserId: 0
+        locks: { asset: {}, vendor: {} }, lockedAsset: 0, lockedVendor: 0,
+        keyword: '', page: 'dashboard', editingAssetId: 0, editingUserId: 0, editingUpdatedAt: ''
     };
 
     const $ = (id) => document.getElementById(id);
@@ -160,6 +161,10 @@
         const st = STATUS[code] || { text: code || '—', cls: '' };
         return '<span class="badge ' + st.cls + '">' + esc(st.text) + '</span>';
     };
+    const lockIcon = (id, entity) => {
+        const who = state.locks[entity] && state.locks[entity][id];
+        return who ? '<span title="' + esc(who) + ' 編輯中" style="color:#b45309;">🔒</span> ' : '';
+    };
 
     async function loadFieldOptions() {
         try {
@@ -201,6 +206,11 @@
     async function loadAssets() {
         const res = await api('/api/assets');
         state.assets = res.assets || [];
+        try {
+            const l = await api('/api/locks?entity=asset');
+            state.locks.asset = {};
+            (l.locks || []).forEach(x => { state.locks.asset[x.id] = x.username; });
+        } catch (e) { state.locks.asset = {}; }
         fillAssetSelects();
         renderAssetTable();
     }
@@ -225,6 +235,11 @@
     async function loadVendors() {
         const res = await api('/api/vendors');
         state.vendors = res.vendors || [];
+        try {
+            const l = await api('/api/locks?entity=vendor');
+            state.locks.vendor = {};
+            (l.locks || []).forEach(x => { state.locks.vendor[x.id] = x.username; });
+        } catch (e) { state.locks.vendor = {}; }
         fillVendorSelects();
         renderVendors();
     }
@@ -283,7 +298,7 @@
             tr.innerHTML =
                 '<td><span class="asset-no">' + esc(item.asset_no) + '</span></td>'
                 + '<td><span class="dept">' + esc(deptText(item.department)) + '</span></td>'
-                + '<td><a href="#" class="name-link">' + esc(item.name || '') + '</a></td>'
+                + '<td>' + lockIcon(item.id, 'asset') + '<a href="#" class="name-link">' + esc(item.name || '') + '</a></td>'
                 + '<td>' + esc(catText(item.category)) + '</td>'
                 + '<td>' + dash(item.custodian) + '</td>'
                 + '<td>' + (item.vendor_name ? '🏢 ' + esc(item.vendor_name) : '<span class="muted">其他 (預設)</span>') + '</td>'
@@ -297,7 +312,11 @@
     }
 
     function closeDetail() { $('detail-modal').classList.add('hidden'); }
-    function closeEdit() { $('edit-modal').classList.add('hidden'); }
+    function closeEdit() {
+        const id = state.lockedAsset;
+        if (id) { post('/api/locks/release', { entity: 'asset', id: id }).catch(() => {}); state.lockedAsset = 0; }
+        $('edit-modal').classList.add('hidden');
+    }
 
     async function openDetail(id) {
         try {
@@ -345,10 +364,18 @@
         } catch (err) { toast('❌ 載入履歷失敗：' + err.message, 'err'); }
     }
 
-    function openEditFromDetail() {
+    async function openEditFromDetail() {
         const a = state.assets.find(x => x.id === state.editingAssetId);
         if (!a) return;
+        try {
+            await post('/api/locks/acquire', { entity: 'asset', id: a.id });
+            state.lockedAsset = a.id;
+        } catch (err) {
+            toast(err.message || '目前無法編輯（可能有人正在編輯）。', 'warn');
+            return;
+        }
         closeDetail();
+        state.editingUpdatedAt = a.updated_at || '';
         $('edit-title').textContent = '✏️ 編輯資產 ｜ ' + a.asset_no;
         $('e-no').value = a.asset_no || '';
         $('e-name').value = a.name || '';
@@ -373,7 +400,8 @@
                 vendor_id: parseInt($('e-vendor').value, 10) || 0,
                 status: $('e-status').value, scrap_reason: $('e-scrap').value.trim(),
                 purchase_date: $('e-purchase').value, warranty_date: $('e-warranty').value,
-                spec_note: $('e-spec').value.trim(), notes: $('e-notes').value.trim()
+                spec_note: $('e-spec').value.trim(), notes: $('e-notes').value.trim(),
+                expectedUpdatedAt: state.editingUpdatedAt
             });
             closeEdit();
             toast('💾 資產已更新。', 'ok');
@@ -493,7 +521,7 @@
             const nda = v.has_nda ? '<span class="badge badge-active">已簽署</span>' : '<span class="badge badge-scrapped">未簽署</span>';
             const period = (v.maint_start || v.maint_end) ? (esc(v.maint_start || '—') + ' ~ ' + esc(v.maint_end || '—')) : '<span class="muted">未設定</span>';
             const tr = document.createElement('tr');
-            tr.innerHTML = '<td><strong>' + esc(v.name) + '</strong>' + (v.address ? '<div class="sub">' + esc(v.address) + '</div>' : '') + '</td>'
+            tr.innerHTML = '<td>' + lockIcon(v.id, 'vendor') + '<strong>' + esc(v.name) + '</strong>' + (v.address ? '<div class="sub">' + esc(v.address) + '</div>' : '') + '</td>'
                 + '<td>' + dash(v.representative) + '</td>'
                 + '<td>' + dash(v.phone) + '</td>'
                 + '<td style="text-align:center;">' + nda + '</td>'
@@ -509,9 +537,16 @@
         tbody.querySelectorAll('[data-del-vendor]').forEach(btn => btn.addEventListener('click', () => removeVendor(Number(btn.getAttribute('data-del-vendor')))));
     }
 
-    function startEditVendor(id) {
+    async function startEditVendor(id) {
         const v = state.vendors.find(x => x.id === id);
         if (!v) return;
+        try {
+            await post('/api/locks/acquire', { entity: 'vendor', id: v.id });
+            state.lockedVendor = v.id;
+        } catch (err) {
+            toast(err.message || '目前無法編輯（可能有人正在編輯）。', 'warn');
+            return;
+        }
         $('v-id').value = v.id;
         $('v-name').value = v.name || '';
         $('v-rep').value = v.representative || '';
@@ -526,6 +561,10 @@
     }
 
     function clearVendorForm() {
+        if (state.lockedVendor) {
+            post('/api/locks/release', { entity: 'vendor', id: state.lockedVendor }).catch(() => {});
+            state.lockedVendor = 0;
+        }
         ['v-id', 'v-name', 'v-rep', 'v-phone', 'v-address', 'v-items', 'v-start', 'v-end'].forEach(id => { const el = $(id); if (el) el.value = ''; });
         const nda = $('v-nda'); if (nda) nda.value = '1';
     }
