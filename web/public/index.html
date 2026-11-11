@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IT 資產管理系統（Web 版）</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <!-- 🔐 登入畫面 -->
+    <div id="login-view" class="login-wrap">
+        <div class="login-card">
+            <div class="login-logo">🔐</div>
+            <h1>IT 資產管理系統</h1>
+            <p class="login-sub">Web 版 ｜ 請輸入帳號與密碼登入</p>
+            <form id="login-form" autocomplete="off">
+                <div class="field">
+                    <label for="login-username">帳號</label>
+                    <input type="text" id="login-username" autocomplete="username" placeholder="請輸入帳號" required>
+                </div>
+                <div class="field">
+                    <label for="login-password">密碼</label>
+                    <input type="password" id="login-password" autocomplete="current-password" placeholder="請輸入密碼" required>
+                </div>
+                <div id="login-error" class="alert hidden"></div>
+                <button type="submit" class="btn btn-primary btn-block" id="login-btn">登入系統</button>
+            </form>
+            <div class="login-hint">
+                <div>👑 管理者：<b>admin</b> ／ 預設密碼 <b>5508888</b></div>
+                <div>👤 一般使用者：<b>User</b> ／ 預設密碼 <b>1234</b></div>
+                <div class="note">目前為 Web 唯讀版：可查詢資料與匯出報表，不含修改功能。</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 📋 主畫面 -->
+    <div id="app-view" class="hidden">
+        <header class="topbar">
+            <div class="brand">📋 <span>IT 資產管理系統</span><small>Web 版</small></div>
+            <div class="topbar-right">
+                <span id="user-chip" class="user-chip">—</span>
+                <button type="button" class="btn btn-ghost" id="logout-btn">登出</button>
+            </div>
+        </header>
+
+        <main class="container">
+            <div id="readonly-note" class="tip">ℹ️ 目前為<b>唯讀模式</b>（Phase 1）：可查詢資產、檢視履歷與匯出 Excel 盤點總表；新增／修改請使用單機版。</div>
+
+            <div class="card toolbar">
+                <input type="text" id="search" placeholder="🔍 搜尋資產編號、名稱、保管人、位置、規格..." autocomplete="off">
+                <div class="toolbar-actions">
+                    <span id="count-label" class="count">—</span>
+                    <button type="button" class="btn btn-success" id="export-btn">📥 匯出 Excel 盤點總表</button>
+                    <button type="button" class="btn btn-ghost" id="refresh-btn">🔄 重新整理</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="table-wrap">
+                    <table id="asset-table">
+                        <thead>
+                            <tr>
+                                <th style="width:170px;">資產編號</th>
+                                <th style="width:120px;">部門</th>
+                                <th>設備名稱</th>
+                                <th style="width:130px;">資產大類</th>
+                                <th style="width:100px;">保管窗口</th>
+                                <th style="width:130px;">購買廠商</th>
+                                <th style="width:100px; text-align:center;">目前狀態</th>
+                                <th style="width:130px;">當前位置</th>
+                                <th style="width:170px;">規格/備註</th>
+                                <th style="width:150px;">備註事項</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="empty-state" class="empty hidden">目前沒有符合條件的資產資料。</div>
+            </div>
+
+            <footer class="footer">
+                <span>IT 資產管理系統 · Web 版 <span id="ver-label">—</span></span>
+                <span>資料來源：伺服器端 SQLite（唯讀）</span>
+            </footer>
+        </main>
+    </div>
+
+    <!-- 📋 資產履歷彈窗 -->
+    <div id="detail-modal" class="modal hidden">
+        <div class="modal-card">
+            <div class="modal-head">
+                <strong id="modal-title">資產履歷</strong>
+                <button type="button" class="btn btn-ghost" id="modal-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div id="modal-info" class="info-grid"></div>
+                <h4 class="section-title">🔧 維修紀錄</h4>
+                <div id="modal-repairs" class="mini-list"></div>
+                <h4 class="section-title">🔄 轉移歷程</h4>
+                <div id="modal-transfers" class="mini-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast-box" class="toast-box"></div>
+    <script src="/app.js"></script>
+</body>
+</html>

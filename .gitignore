@@ -36,6 +36,7 @@ uploads/
 data_location.json
 latest.json
 *.log
+web/config.json
 
 # ---------- 匯出報表暫存（範例_*.xlsx 會保留） ----------
 IT_資產盤點報表_*.xlsx
