@@ -32,7 +32,7 @@
         assets: [], vendors: [], repairs: [], transfers: [], maint: [], recycle: [], users: [],
         catOpts: [], depOpts: [], categories: {}, departments: {},
         locks: { asset: {}, vendor: {} }, lockedAsset: 0, lockedVendor: 0,
-        vendorKeyword: '', vendorEditKeyword: '', maintKeyword: '', pendingVendorId: 0,
+        vendorKeyword: '', vendorEditKeyword: '', maintKeyword: '', pendingVendorId: 0, vendorModalId: 0,
         keyword: '', page: 'dashboard', editingAssetId: 0, editingUserId: 0, editingUpdatedAt: ''
     };
 
@@ -113,7 +113,7 @@
         state.user = null; state.isAdmin = false;
         state.assets = []; state.users = [];
         document.querySelectorAll('table tbody').forEach(tb => { tb.innerHTML = ''; });
-        ['detail-modal', 'edit-modal'].forEach(id => { const m = $(id); if (m) m.classList.add('hidden'); });
+        ['detail-modal', 'edit-modal', 'vendor-modal', 'files-modal'].forEach(id => { const m = $(id); if (m) m.classList.add('hidden'); });
         toast('👋 您已登出系統。', 'ok');
         showLogin();
     }
@@ -531,6 +531,15 @@
         return hay.indexOf(kw) >= 0;
     }
 
+    function vendorMaintBadge(start, end) {
+        if (!end) return '<span class="badge badge-inventory">未設定合約</span>';
+        const today = new Date().toISOString().slice(0, 10);
+        if (end < today) return '<span class="badge badge-scrapped">⚠️ 合約已到期</span>';
+        const soonLimit = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
+        if (end <= soonLimit) return '<span class="badge badge-repair">🕒 60 天內到期</span>';
+        return '<span class="badge badge-active">✅ 合約有效</span>';
+    }
+
     function renderVendors() {
         const tbody = document.querySelector('#vendors-table tbody');
         if (!tbody) return;
@@ -545,17 +554,18 @@
             const nda = v.has_nda ? '<span class="badge badge-active">已簽署</span>' : '<span class="badge badge-scrapped">未簽署</span>';
             const period = (v.maint_start || v.maint_end) ? (esc(v.maint_start || '—') + ' ~ ' + esc(v.maint_end || '—')) : '<span class="muted">未設定</span>';
             const tr = document.createElement('tr');
-            tr.innerHTML = '<td>' + lockIcon(v.id, 'vendor') + '<strong>' + esc(v.name) + '</strong>' + (v.address ? '<div class="sub">' + esc(v.address) + '</div>' : '') + '</td>'
+            tr.innerHTML = '<td>' + lockIcon(v.id, 'vendor') + '<a href="#" class="name-link" data-view-vendor="' + v.id + '" title="點擊查看完整資訊">' + esc(v.name) + '</a>' + (v.address ? '<div class="sub">' + esc(v.address) + '</div>' : '') + '</td>'
                 + '<td>' + dash(v.representative) + '</td>'
                 + '<td>' + dash(v.phone) + '</td>'
                 + '<td style="text-align:center;">' + nda + '</td>'
-                + '<td style="font-size:12px;">' + period + '</td>'
+                + '<td style="font-size:12px;">' + vendorMaintBadge(v.maint_start, v.maint_end) + '<div class="sub" style="margin-top:3px;font-size:11.5px;">📅 ' + period + '</div></td>'
                 + '<td style="text-align:center;white-space:nowrap;">'
                 + '<button class="btn btn-ghost btn-sm" data-goto-edit="' + v.id + '">✏️ 維護</button> '
                 + '<button class="btn btn-primary btn-sm" data-files-vendor="' + v.id + '">📎</button> '
                 + '<button class="btn btn-danger btn-sm" data-del-vendor="' + v.id + '">🗑️</button></td>';
             tbody.appendChild(tr);
         });
+        tbody.querySelectorAll('[data-view-vendor]').forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); openVendorDetail(Number(a.getAttribute('data-view-vendor'))); }));
         tbody.querySelectorAll('[data-goto-edit]').forEach(btn => btn.addEventListener('click', () => gotoVendorEdit(Number(btn.getAttribute('data-goto-edit')))));
         tbody.querySelectorAll('[data-files-vendor]').forEach(btn => btn.addEventListener('click', () => openVendorFiles(Number(btn.getAttribute('data-files-vendor')))));
         tbody.querySelectorAll('[data-del-vendor]').forEach(btn => btn.addEventListener('click', () => removeVendor(Number(btn.getAttribute('data-del-vendor')))));
@@ -705,7 +715,9 @@
             const tr = document.createElement('tr');
             const content = [r.content, r.notes].filter(x => x && String(x).trim()).join('　');
             tr.innerHTML = '<td>' + esc(r.maint_date || '—') + '</td>'
-                + '<td>' + esc(r.vendor_name || '') + '</td>'
+                + '<td>' + ((r.vendor_id && state.vendors.some(x => x.id === r.vendor_id))
+                    ? '<a href="#" class="name-link" data-view-vendor="' + r.vendor_id + '" title="點擊查看廠商完整資訊">' + esc(r.vendor_name || '') + '</a>'
+                    : esc(r.vendor_name || '')) + '</td>'
                 + '<td><strong>' + esc(r.equipment || '') + '</strong>' + (r.equipment_sn ? ' <span class="sub">(' + esc(r.equipment_sn) + ')</span>' : '')
                 + (content ? '<div class="sub">' + esc(content) + '</div>' : '') + '</td>'
                 + '<td>' + dash(r.maint_type) + '</td>'
@@ -717,6 +729,7 @@
             tbody.appendChild(tr);
         });
         tbody.querySelectorAll('[data-files-maint]').forEach(btn => btn.addEventListener('click', () => openMaintDocs(Number(btn.getAttribute('data-files-maint')))));
+        tbody.querySelectorAll('[data-view-vendor]').forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); openVendorDetail(Number(a.getAttribute('data-view-vendor'))); }));
         tbody.querySelectorAll('[data-del-maint]').forEach(btn => btn.addEventListener('click', () => removeMaint(Number(btn.getAttribute('data-del-maint')))));
     }
 
@@ -1156,6 +1169,75 @@
         $('files-modal').classList.remove('hidden');
     }
 
+    // ── 廠商完整資訊彈窗（唯讀檢視，點廠商名稱開啟）────
+    function closeVendorModal() {
+        const m = $('vendor-modal'); if (m) m.classList.add('hidden');
+        state.vendorModalId = 0;
+    }
+
+    function vendorFileLinks(list) {
+        if (!list.length) return '<span class="muted">未上傳</span>';
+        return '<div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">' + list.map(p => {
+            const name = '📄 ' + esc(fileBaseName(p));
+            const title = ' title="' + esc(fileBaseName(p)) + '"';
+            return state.isAdmin
+                ? '<a class="file-chip" href="/api/files?path=' + encodeURIComponent(p) + '" target="_blank" rel="noopener"' + title + '>' + name + '</a>'
+                : '<span class="file-chip plain"' + title + '>' + name + '</span>';
+        }).join('') + '</div>';
+    }
+
+    async function openVendorDetail(id) {
+        const v = state.vendors.find(x => x.id === Number(id));
+        if (!v) { toast('⚠️ 找不到廠商資料（可能已被刪除）。', 'warn'); return; }
+        state.vendorModalId = v.id;
+        const ndaFiles = splitPaths(v.nda_files);
+        const conFiles = splitPaths(v.contract_files);
+        const periodText = (v.maint_start || v.maint_end)
+            ? (esc(v.maint_start || '未設定') + ' ~ ' + esc(v.maint_end || '未設定'))
+            : '<span class="muted">未設定</span>';
+        const archived = ndaFiles.length + conFiles.length;
+
+        const title = $('vendor-modal-title');
+        if (title) title.textContent = '🏢 合作廠商詳細資訊 ｜ ' + (v.name || '');
+        $('vendor-modal-info').innerHTML =
+            '<div class="full"><b>🏢 廠商公司名稱：</b>' + esc(v.name || '') + '</div>'
+            + '<div><b>👤 主要服務專員：</b>' + dash(v.representative) + '</div>'
+            + '<div><b>📞 聯絡窗口電話：</b>' + (v.phone ? '<a href="tel:' + esc(v.phone) + '" class="name-link">' + esc(v.phone) + '</a>' : '<span class="muted">—</span>') + '</div>'
+            + '<div class="full"><b>📍 通訊地址：</b>' + dash(v.address) + '</div>'
+            + '<div class="full"><b>💡 主要維護服務範疇：</b>' + dash(v.service_items) + '</div>'
+            + '<div><b>📅 維護合約期間：</b>' + periodText + '</div>'
+            + '<div><b>📊 維護合約狀態：</b>' + vendorMaintBadge(v.maint_start, v.maint_end) + '</div>'
+            + '<div><b>🔒 資安 NDA 狀態：</b>' + (v.has_nda ? '<span class="badge badge-active">🔒 已簽署</span>' : '<span class="badge badge-scrapped">⚠️ 未簽署</span>') + '</div>'
+            + '<div><b>📁 附件歸檔：</b>' + (archived ? '<span class="badge badge-inventory">已歸檔 ' + ndaFiles.length + ' 份 NDA／' + conFiles.length + ' 份合約</span>' : '<span class="muted">無隨附文件</span>') + '</div>'
+            + '<div class="full"><b>🔒 NDA 資安條款文件：</b>' + vendorFileLinks(ndaFiles) + '</div>'
+            + '<div class="full"><b>📄 採購合約文件：</b>' + vendorFileLinks(conFiles) + '</div>';
+
+        const box = $('vendor-modal-maint');
+        box.innerHTML = '<div class="mini-empty">載入維護紀錄中...</div>';
+        $('vendor-modal').classList.remove('hidden');
+
+        try {
+            if (!state.maint.length) {
+                const res = await api('/api/vendor-maint');
+                state.maint = res.records || [];
+                renderMaint();
+            }
+            const rows = state.maint.filter(r => (r.vendor_id && r.vendor_id === v.id) || r.vendor_name === v.name);
+            box.innerHTML = rows.length ? rows.slice(0, 10).map(r => {
+                const meta = [r.maint_type, r.handler ? '👤 ' + r.handler : '', Number(r.cost) > 0 ? '💰 ' + money(r.cost) + ' 元' : ''].filter(x => x && String(x).trim()).join('　｜　');
+                const content = [r.content, r.notes].filter(x => x && String(x).trim()).join('　');
+                return '<div class="mini-item"><div class="row1"><span><strong>' + esc(r.equipment || '(未填設備)') + '</strong>'
+                    + (r.equipment_sn ? ' <span class="sub">(' + esc(r.equipment_sn) + ')</span>' : '') + '</span>'
+                    + '<span>📅 ' + esc(r.maint_date || '—') + '</span></div>'
+                    + (meta ? '<div class="sub">' + esc(meta) + '</div>' : '')
+                    + (content ? '<div class="sub">📝 ' + esc(content) + '</div>' : '') + '</div>';
+            }).join('') + (rows.length > 10 ? '<div class="sub">（僅顯示最近 10 筆，共 ' + rows.length + ' 筆）</div>' : '')
+                : '<div class="mini-empty">此廠商尚無維護紀錄。</div>';
+        } catch (err) {
+            box.innerHTML = '<div class="mini-empty">無法載入維護紀錄：' + esc(err.message) + '</div>';
+        }
+    }
+
     async function openMaintDocs(id) {
         const rec = state.maint.find(x => x.id === id);
         if (!rec) return;
@@ -1348,7 +1430,19 @@
         $('e-delete').addEventListener('click', deleteCurrentAsset);
         $('detail-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'detail-modal') closeDetail(); });
         $('edit-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'edit-modal') closeEdit(); });
-        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDetail(); closeEdit(); closeFilesModal(); } });
+        $('vendor-modal-close').addEventListener('click', closeVendorModal);
+        $('vendor-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'vendor-modal') closeVendorModal(); });
+        $('vendor-modal-edit').addEventListener('click', () => {
+            const id = state.vendorModalId;
+            closeVendorModal();
+            if (id) gotoVendorEdit(id);
+        });
+        $('vendor-modal-files').addEventListener('click', () => {
+            const id = state.vendorModalId;
+            closeVendorModal();
+            if (id) openVendorFiles(id);
+        });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDetail(); closeEdit(); closeVendorModal(); closeFilesModal(); } });
 
         // 表單
         $('form-asset').addEventListener('submit', submitAssetForm);

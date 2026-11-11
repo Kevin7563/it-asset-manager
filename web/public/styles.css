@@ -50,8 +50,16 @@ input[type="text"]:focus, input[type="password"]:focus { border-color: var(--acc
 /* ── 表格 ── */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 1180px; }
+/* 欄位較少的表格不需要 1180px 最小寬度，避免小視窗出現水平捲軸把「操作」欄切掉 */
+#vendors-table { min-width: 900px; }
+#maint-table { min-width: 1040px; }
 th { background: #f8fafc; color: #475569; font-size: 12.5px; text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--border); white-space: nowrap; }
 td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; vertical-align: top; color: #334155; }
+
+/* 廠商資訊彈窗內的檔案連結（單行省略，避免長檔名撐破版面） */
+.file-chip { display: block; width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: #2563eb; font-size: 12.5px; font-weight: bold; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-chip:hover { background: #eff6ff; border-color: #bfdbfe; text-decoration: underline; }
+.file-chip.plain { color: #475569; font-weight: normal; background: #f8fafc; }
 tbody tr:hover { background: #f8fafc; }
 .asset-no { font-weight: bold; color: #1f4e78; font-family: Consolas, monospace; white-space: nowrap; }
 .dept { color: #6d28d9; font-weight: bold; white-space: nowrap; }

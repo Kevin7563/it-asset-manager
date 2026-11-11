@@ -481,6 +481,25 @@
         </div>
     </div>
 
+    <!-- 🏢 廠商資訊彈窗（唯讀檢視，點廠商名稱開啟） -->
+    <div id="vendor-modal" class="modal hidden">
+        <div class="modal-card" style="width:760px;">
+            <div class="modal-head">
+                <strong id="vendor-modal-title">🏢 合作廠商詳細資訊</strong>
+                <div style="white-space:nowrap;">
+                    <button type="button" class="btn btn-primary btn-sm" id="vendor-modal-edit" style="margin-right:6px;">✏️ 維護</button>
+                    <button type="button" class="btn btn-success btn-sm" id="vendor-modal-files" style="margin-right:6px;">📎 附件</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="vendor-modal-close">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="vendor-modal-info" class="info-grid"></div>
+                <h4 class="section-title">🗂️ 維護紀錄</h4>
+                <div id="vendor-modal-maint" class="mini-list"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- ✏️ 編輯資產彈窗 -->
     <div id="edit-modal" class="modal hidden">
         <div class="modal-card" style="width:720px;">
