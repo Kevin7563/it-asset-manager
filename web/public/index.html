@@ -37,23 +37,43 @@
         <aside class="sidebar-web">
             <div class="side-brand">📋 IT 資產管理<span>Web</span></div>
             <nav id="side-nav">
-                <div class="nav-item active" data-page="dashboard">📊 總覽看板</div>
-                <div class="nav-group" data-perm="asset">📁 資訊資產管理</div>
-                <div class="nav-item sub" data-perm="asset" data-page="asset-new">➕ 新增資訊資產</div>
-                <div class="nav-item sub" data-perm="asset" data-page="repairs">🔧 資訊資產維修</div>
-                <div class="nav-item sub" data-perm="asset" data-page="transfers">🔄 資訊資產轉移</div>
-                <div class="nav-item sub" data-perm="asset" data-page="recycle">🗑️ 資源回收桶</div>
-                <div class="nav-group" data-perm="vendor">🏢 廠商管理</div>
-                <div class="nav-item sub" data-perm="vendor" data-page="vendor-board">📊 廠商管理看板</div>
-                <div class="nav-item subsub" data-perm="vendor" data-page="vendors">➕ 新增廠商資訊</div>
-                <div class="nav-item subsub" data-perm="vendor" data-page="vendor-edit">✏️ 廠商資料維護</div>
-                <div class="nav-item sub" data-perm="vendor" data-page="vendor-maint-log">🗂️ 廠商維護歷程看板</div>
-                <div class="nav-item subsub" data-perm="vendor" data-page="vendor-maint-add">📝 新增廠商維護紀錄</div>
-                <div class="nav-group" data-perm="all">⚙️ 系統管理</div>
-                <div class="nav-item sub" data-perm="all" data-page="fields">🧩 欄位管理</div>
-                <div class="nav-item sub" data-perm="all" data-page="users">👥 帳號管理</div>
-                <div class="nav-item sub" data-perm="all" data-page="tools">📥 匯入／備份</div>
-                <div class="nav-item sub" data-page="password">🔒 修改我的密碼</div>
+                <div class="nav-item" data-page="dashboard">📊 總覽看板首頁</div>
+
+                <div class="nav-section" data-perm="asset">
+                    <div class="nav-group" data-group="asset">📁 資訊資產管理 <span class="caret">▼</span></div>
+                    <div class="nav-children" data-children="asset">
+                        <div class="nav-item sub" data-page="asset-new">➕ 新增資訊資產</div>
+                        <div class="nav-item sub" data-page="repairs">🔧 資訊資產維修</div>
+                        <div class="nav-item sub" data-page="transfers">🔄 資訊資產轉移</div>
+                        <div class="nav-item sub" data-page="recycle">🗑️ 資源回收桶</div>
+                    </div>
+                </div>
+
+                <div class="nav-section" data-perm="vendor">
+                    <div class="nav-group" data-group="vendor">🏢 廠商管理 <span class="caret">▼</span></div>
+                    <div class="nav-children" data-children="vendor">
+                        <div class="nav-item sub has-sub" data-page="vendor-board">📊 廠商管理看板 <span class="caret" data-caret="vendor-board">▼</span></div>
+                        <div class="nav-children" data-children="vendor-board">
+                            <div class="nav-item subsub" data-page="vendors">➕ 新增廠商資訊</div>
+                            <div class="nav-item subsub" data-page="vendor-edit">✏️ 廠商資料維護</div>
+                        </div>
+                        <div class="nav-item sub has-sub" data-page="vendor-maint-log">🗂️ 廠商維護歷程看板 <span class="caret" data-caret="vendor-maint-log">▼</span></div>
+                        <div class="nav-children" data-children="vendor-maint-log">
+                            <div class="nav-item subsub" data-page="vendor-maint-add">📝 新增廠商維護紀錄</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="nav-section" data-perm="all">
+                    <div class="nav-group" data-group="all">⚙️ 系統管理 <span class="caret">▼</span></div>
+                    <div class="nav-children" data-children="all">
+                        <div class="nav-item sub" data-page="fields">🧩 欄位管理</div>
+                        <div class="nav-item sub" data-page="users">👥 帳號管理</div>
+                        <div class="nav-item sub" data-page="tools">📥 匯入／備份</div>
+                    </div>
+                </div>
+
+                <div class="nav-item" data-page="password">🔒 修改我的密碼</div>
             </nav>
             <div class="side-foot">
                 <div id="side-user">—</div>

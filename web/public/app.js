@@ -20,7 +20,7 @@
         scrapped: { text: '已報廢', cls: 'badge-scrapped' }
     };
     const PAGE_TITLES = {
-        dashboard: '📊 總覽看板', 'asset-new': '➕ 新增資訊資產', repairs: '🔧 資訊資產維修',
+        dashboard: '📊 總覽看板首頁', 'asset-new': '➕ 新增資訊資產', repairs: '🔧 資訊資產維修',
         transfers: '🔄 資訊資產轉移', recycle: '🗑️ 資源回收桶',
         'vendor-board': '📊 廠商管理看板', vendors: '➕ 新增廠商資訊', 'vendor-edit': '✏️ 廠商資料維護',
         'vendor-maint-log': '🗂️ 廠商維護歷程看板', 'vendor-maint-add': '📝 新增廠商維護紀錄',
@@ -158,6 +158,68 @@
         const side = $('side-user'); if (side) side.textContent = label;
     }
 
+    // ── 側邊選單收合（比照單機版：群組 ▼ 可展開／收合）────
+    const NAV_STATE_KEY = 'itamNavCollapsed';
+    function readNavCollapsed() {
+        try { const raw = localStorage.getItem(NAV_STATE_KEY); const arr = raw ? JSON.parse(raw) : []; return Array.isArray(arr) ? arr : []; } catch (e) { return []; }
+    }
+    function writeNavCollapsed(list) {
+        try { localStorage.setItem(NAV_STATE_KEY, JSON.stringify(list)); } catch (e) {}
+    }
+    function setNavCollapsed(key, collapsed) {
+        const box = document.querySelector('#side-nav [data-children="' + key + '"]');
+        if (!box) return;
+        box.classList.toggle('collapsed', !!collapsed);
+        const group = document.querySelector('#side-nav .nav-group[data-group="' + key + '"]');
+        if (group) group.classList.toggle('collapsed', !!collapsed);
+        const caret = document.querySelector('#side-nav [data-caret="' + key + '"]');
+        if (caret) caret.classList.toggle('is-collapsed', !!collapsed);
+    }
+    function saveNavCollapsed() {
+        const list = Array.from(document.querySelectorAll('#side-nav .nav-children.collapsed')).map(el => el.getAttribute('data-children'));
+        writeNavCollapsed(list);
+    }
+    function restoreNavCollapsed() {
+        const list = readNavCollapsed();
+        document.querySelectorAll('#side-nav .nav-children').forEach(box => {
+            setNavCollapsed(box.getAttribute('data-children'), list.indexOf(box.getAttribute('data-children')) >= 0);
+        });
+    }
+    function initNavTree() {
+        document.querySelectorAll('#side-nav .nav-group').forEach(g => {
+            g.addEventListener('click', () => {
+                const key = g.getAttribute('data-group');
+                const box = document.querySelector('#side-nav [data-children="' + key + '"]');
+                if (!box) return;
+                setNavCollapsed(key, !box.classList.contains('collapsed'));
+                saveNavCollapsed();
+            });
+        });
+        document.querySelectorAll('#side-nav [data-caret]').forEach(c => {
+            c.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const key = c.getAttribute('data-caret');
+                const box = document.querySelector('#side-nav [data-children="' + key + '"]');
+                if (!box) return;
+                setNavCollapsed(key, !box.classList.contains('collapsed'));
+                saveNavCollapsed();
+            });
+        });
+        restoreNavCollapsed();
+    }
+    function expandNavFor(page) {
+        const item = document.querySelector('#side-nav .nav-item[data-page="' + page + '"]');
+        if (!item) return;
+        let box = item.parentElement ? item.parentElement.closest('.nav-children') : null;
+        let guard = 0;
+        while (box && guard++ < 5) {
+            setNavCollapsed(box.getAttribute('data-children'), false);
+            box = box.parentElement ? box.parentElement.closest('.nav-children') : null;
+        }
+        // 若目前頁面本身是「有子項」的家長，順便展開它的子項
+        if (document.querySelector('#side-nav [data-children="' + page + '"]')) setNavCollapsed(page, false);
+    }
+
     async function showPage(name) {
         if (!PAGE_TITLES[name]) name = 'dashboard';
         const req = PAGE_PERMS[name];
@@ -175,6 +237,7 @@
         const target = $('page-' + name);
         if (target) target.classList.remove('hidden');
         document.querySelectorAll('#side-nav .nav-item').forEach(el => el.classList.toggle('active', el.getAttribute('data-page') === name));
+        expandNavFor(name);
         const title = $('page-title'); if (title) title.textContent = PAGE_TITLES[name] || '';
         try { await refreshPage(name); } catch (e) { toast('載入失敗：' + e.message, 'err'); }
     }
@@ -1672,6 +1735,7 @@
         document.querySelectorAll('#side-nav .nav-item').forEach(el => {
             el.addEventListener('click', () => showPage(el.getAttribute('data-page')));
         });
+        initNavTree();
 
         const search = $('search');
         if (search) search.addEventListener('input', (e) => { state.keyword = e.target.value || ''; renderAssetTable(); });
