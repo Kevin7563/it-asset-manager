@@ -1389,6 +1389,51 @@
         }
     }
 
+    async function importDesktopBackupFiles() {
+        const input = $('import-backup-files');
+        const box = $('import-backup-result');
+        const btn = $('import-backup-btn');
+        const list = (input && input.files) ? Array.prototype.slice.call(input.files) : [];
+        if (!list.length) { toast('⚠️ 請先選擇 .zip 或 .db 備份檔。', 'warn'); return; }
+        if (!confirmBox('📥 確定要匯入單機版備份？\n目前資產／廠商／維修／轉移／維護紀錄會被覆蓋（帳號密碼不受影響）。\n系統會先自動備份目前資料庫。')) return;
+        btn.disabled = true;
+        const old = btn.textContent;
+        btn.textContent = '⏳ 匯入中...';
+        try {
+            const files = await readFilesAsBase64(list);
+            const res = await post('/api/import/desktop-backup', {
+                files: files,
+                importFields: $('import-backup-fields') ? $('import-backup-fields').checked : true
+            });
+            const names = Object.keys(res.tables || {});
+            if (box) {
+                box.classList.remove('hidden');
+                box.innerHTML = '<strong style="color:#15803d;">✅ 匯入完成</strong>'
+                    + '<div>資料來源：' + esc(res.dbName || '（僅附件）') + '</div>'
+                    + '<div>資料表：' + (names.length ? names.map(k => esc(k) + ' ' + (res.tables[k] || 0) + ' 筆').join('　｜　') : '未匯入任何資料表') + '</div>'
+                    + '<div>附件檔：' + (res.attachments || 0) + ' 個　｜　附件路徑修正：' + (res.repointed || 0) + ' 個路徑</div>'
+                    + (res.safety ? '<div>匯入前備份：<code>' + esc(res.safety) + '</code></div>' : '')
+                    + ((res.warnings && res.warnings.length) ? '<div style="color:#b45309;">⚠️ ' + esc(res.warnings.join('；')) + '</div>' : '')
+                    + '<div>資料已寫入，按下方按鈕重新載入頁面以查看最新資料。</div>'
+                    + '<button type="button" class="btn btn-primary btn-sm" id="import-backup-reload" style="margin-top:8px;">🔄 重新載入頁面</button>';
+                const reloadBtn = box.querySelector('#import-backup-reload');
+                if (reloadBtn) reloadBtn.addEventListener('click', () => window.location.reload());
+            }
+            toast('✅ 備份匯入完成。', 'ok');
+        } catch (err) {
+            if (box) {
+                box.classList.remove('hidden');
+                box.innerHTML = '<strong style="color:#b91c1c;">❌ 匯入失敗</strong><div>' + esc(err.message) + '</div>'
+                    + '<div style="font-size:12px;color:#64748b;">常見原因：選到 .wal/.shm 檔、ZIP 內沒有備份資料，或檔案不是單機版備份。</div>';
+            }
+            toast('❌ 匯入失敗：' + err.message, 'err');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = old;
+            if (input) input.value = '';
+        }
+    }
+
     async function loadVersionInfo() {
         const box = $('version-info');
         if (!box) return;
@@ -1478,6 +1523,7 @@
         $('import-vendor-btn').addEventListener('click', importVendorsExcel);
         $('backup-files-btn').addEventListener('click', downloadAttachmentsZip);
         $('restore-btn').addEventListener('click', restoreDatabase);
+        $('import-backup-btn').addEventListener('click', importDesktopBackupFiles);
         $('tpl-assets-btn').addEventListener('click', () => { downloadBlob('/api/template/assets.xlsx', '資產資料匯入範本.xlsx').catch(e => toast('❌ ' + e.message, 'err')); });
         $('tpl-vendors-btn').addEventListener('click', () => { downloadBlob('/api/template/vendors.xlsx', '廠商資料匯入範本.xlsx').catch(e => toast('❌ ' + e.message, 'err')); });
 

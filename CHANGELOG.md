@@ -5,6 +5,25 @@
 
 ---
 
+## [Web 1.2.4] - 2026-11-11
+
+### 新增：匯入單機版備份（.zip／.db）
+
+單機版備份的 `.db`（全備份）與 `.zip`（附件檔／整個資料夾）現在可以直接匯入 Web 版，不必手動複製資料庫或改路徑。
+
+- 介面：系統管理 → 📥 匯入／備份 → **📥 匯入單機版備份（.zip／.db）**，可多選檔案
+- 資料表：覆蓋 `assets_new`／`vendors_new`／`repairs_new`／`transfers_new`／`asset_history_new`／`vendor_maint_records`（欄位取交集，相容新舊 schema）
+- **帳號保留**：`app_users` 與 `web_sessions` 不受影響，匯入後原本帳號密碼照用
+- 可勾選「一併匯入欄位選項」帶入單機版的大類／部門（`field_options`）
+- 附件：ZIP 內 `vendor_files/**` 解壓到 `<資料庫資料夾>\vendor_files\`，並把資料庫內記錄的**舊絕對路徑自動改指向新位置**（先比對相對路徑，再比對檔名）
+- 安全機制：匯入前自動備份目前資料庫到 `backups\asset_data_before_import_*.db`；匯入後清空 `edit_locks`；路徑一律驗證必須在資料夾內（防 ZIP 路徑穿越）
+- 支援格式：`.db`、`.zip`（store／deflate、UTF-8 檔名、含 .NET `Compress-Archive` 產生的 ZIP；不支援 ZIP64／加密 ZIP），可同時上傳多個
+- 新增 `web/lib/zip-read.js`（自製 ZIP 解析，無新增 npm 套件）與 `web/lib/importer.js`
+- API：`POST /api/import/desktop-backup`（管理者）
+- 文件：`web/README.md` 新增「8. 從單機版搬家（匯入備份 .zip／.db）」
+
+---
+
 ## [Web 1.2.3] - 2026-11-11
 
 ### 新增：廠商完整資訊彈窗（對齊單機版 `openVendorDedicatedModal`）
@@ -26,6 +45,8 @@
 
 ---
 
+## [Web 1.2.2] - 2026-11-11
+
 ### 修正（啟動時找不到資料庫檔案）
 
 - 🐛 之前若 `WEB_DB` 指向不存在的檔案，只顯示「請先以單機版建立資料」，看不出是**環境變數殘留**
@@ -39,6 +60,8 @@
 > 常見情境：先前測試把 `WEB_DB` 設到 `%TEMP%\itam_xxx\asset_data.db`，暫存資料夾刪除後啟動就找不到資料庫。清除方式：`Remove-Item Env:WEB_DB`
 
 ---
+
+## [Web 1.0] - 2026-11-11
 
 Web 版升級為**完整功能**，可完全取代單機版操作（單機版仍保留於 `desktop` 分支）。
 

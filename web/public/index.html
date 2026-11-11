@@ -428,6 +428,22 @@
                         <div class="tip-mini">🗜️ 將廠商 NDA／合約／維護單據打包成 ZIP 下載。</div>
                         <button type="button" class="btn btn-success" id="backup-files-btn">⬇️ 下載附件 ZIP</button>
                     </div>
+                    <div class="card" style="border-left:4px solid #0ea5e9;">
+                        <h3 class="card-title">📥 匯入單機版備份（.zip／.db）</h3>
+                        <div class="tip-mini">
+                            📌 可一次選取單機版的「backup_全備份_*.db」與「backup_附件_*.zip」（或整個資料夾壓成的 ZIP）。<br>
+                            匯入會<b>覆蓋目前的資產／廠商／維修／轉移／維護紀錄</b>；<b>帳號與密碼不受影響</b>。系統會先自動備份目前資料庫到 <code>backups</code>。<br>
+                            附件會解壓到資料庫旁的 <code>vendor_files</code>，並自動修正資料庫內的檔案路徑。
+                        </div>
+                        <div class="inline-form">
+                            <input type="file" id="import-backup-files" accept=".zip,.db" multiple style="flex-grow:1;">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;white-space:nowrap;">
+                                <input type="checkbox" id="import-backup-fields" checked> 一併匯入欄位選項（大類／部門）
+                            </label>
+                            <button type="button" class="btn btn-primary" id="import-backup-btn">📥 開始匯入</button>
+                        </div>
+                        <div id="import-backup-result" class="result-box hidden"></div>
+                    </div>
                     <div class="card" style="border-left:4px solid #ef4444;">
                         <h3 class="card-title" style="color:#b91c1c;">♻️ 資料庫還原（危險操作）</h3>
                         <div class="tip-mini warn">⚠️ 還原會<b>覆蓋目前所有資料</b>。系統會先自動備份目前資料庫到資料夾下的 <code>backups</code>。請在確認欄輸入 <b>RESTORE</b> 才會執行。</div>

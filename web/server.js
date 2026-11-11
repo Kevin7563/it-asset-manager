@@ -15,6 +15,7 @@ const service = require('./lib/service');
 const { buildInventoryXlsx } = require('./lib/export-inventory');
 const extras = require('./lib/export-extras');
 const filesLib = require('./lib/files');
+const importer = require('./lib/importer');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const APP_NAME = 'IT 資產管理系統';
@@ -255,6 +256,27 @@ async function handleRestoreDb(req, res, session) {
     return ok(res, { restored: true, safety: safety });
 }
 
+// ── 匯入單機版備份（.zip／.db）────────────────────────────
+async function handleImportDesktopBackup(req, res, session) {
+    if (!isAdmin(session)) return denyReadOnly(res);
+    const d = await body(req, 400 * 1024 * 1024);
+    const list = Array.isArray(d.files) ? d.files : [];
+    if (!list.length) throw new Error('請選擇要匯入的檔案（.zip 或 .db）。');
+    const files = list
+        .map(f => ({ name: String((f && f.name) || ''), buffer: Buffer.from(String((f && f.dataBase64) || ''), 'base64') }))
+        .filter(f => f.buffer.length);
+    if (!files.length) throw new Error('檔案內容為空。');
+
+    const dbPath = path.resolve(CONFIG.dbPath);
+    const dataDir = path.dirname(dbPath);
+    const result = await importer.importDesktopBackup({
+        ctx: ctx, dataDir: dataDir, dbPath: dbPath,
+        files: files, importFields: d.importFields !== false
+    });
+    console.log(`[import] desktop backup by ${session.username}: db=${result.dbImported ? result.dbName : '(none)'} tables=${JSON.stringify(result.tables)} attachments=${result.attachments} repointed=${result.repointed}`);
+    return ok(res, result);
+}
+
 // ── 版本資訊 ───────────────────────────────────────────
 async function handleVersionInfo(res, session) {
     if (!isAdmin(session)) return denyReadOnly(res);
@@ -438,6 +460,9 @@ async function handleWriteApi(req, res, session, p) {
 
     // 資料庫還原
     if (m === 'POST' && p === '/api/backup/restore') return await handleRestoreDb(req, res, session);
+
+    // 📥 匯入單機版備份（.zip／.db）：覆蓋資料表、保留帳號、附件一併還原
+    if (m === 'POST' && p === '/api/import/desktop-backup') return await handleImportDesktopBackup(req, res, session);
 
     return sendJson(res, 404, { ok: false, message: '找不到 API。' });
 }
