@@ -13,6 +13,8 @@ const dbLib = require('./lib/db');
 const auth = require('./lib/auth');
 const service = require('./lib/service');
 const { buildInventoryXlsx } = require('./lib/export-inventory');
+const extras = require('./lib/export-extras');
+const filesLib = require('./lib/files');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const APP_NAME = 'IT 資產管理系統';
@@ -193,7 +195,99 @@ async function handleExportInventory(res, session) {
     res.end(result.buffer);
 }
 
-// ── 權限 / 共用 ─────────────────────────────────────────
+// ── 資料庫還原 / 重新開啟 ───────────────────────────────
+async function reopenDb() {
+    const dbPath = path.resolve(CONFIG.dbPath);
+    db = await dbLib.openDb(dbPath, { readOnly: false });
+    ctx = dbLib.makeCtx(db);
+    dbq = ctx;
+    try { await ctx.exec('PRAGMA journal_mode = WAL'); } catch (e) {}
+    await service.ensureSchema(ctx);
+}
+
+async function handleRestoreDb(req, res, session) {
+    if (!isAdmin(session)) return denyReadOnly(res);
+    const d = await body(req, 300 * 1024 * 1024);
+    if (String(d.confirm || '').trim().toUpperCase() !== 'RESTORE') throw new Error('請在確認欄輸入 RESTORE 才會執行還原。');
+    const buf = Buffer.from(String(d.dataBase64 || ''), 'base64');
+    if (buf.length < 512) throw new Error('檔案內容為空或過小。');
+    if (buf.slice(0, 16).toString('latin1') !== 'SQLite format 3\u0000') throw new Error('檔案不是有效的 SQLite 資料庫。');
+
+    const dbPath = path.resolve(CONFIG.dbPath);
+    const dir = path.dirname(dbPath);
+    const backupsDir = path.join(dir, 'backups');
+    filesLib.ensureDir(backupsDir);
+    const stampTxt = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '');
+    const safety = path.join(backupsDir, 'asset_data_before_restore_' + stampTxt + '.db');
+
+    try { await ctx.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (e) {}
+    fs.copyFileSync(dbPath, safety);
+    await dbLib.close(db);
+    ['-wal', '-shm'].forEach(s => { try { const p = dbPath + s; if (fs.existsSync(p)) fs.unlinkSync(p); } catch (e) {} });
+    fs.writeFileSync(dbPath, buf);
+    await reopenDb();
+    console.log(`[restore] db restored by ${session.username}; safety backup: ${safety}`);
+    return ok(res, { restored: true, safety: safety });
+}
+
+// ── 版本資訊 ───────────────────────────────────────────
+async function handleVersionInfo(res, session) {
+    if (!isAdmin(session)) return denyReadOnly(res);
+    let counts = {};
+    try {
+        counts.assets = (await ctx.get(`SELECT COUNT(*) AS c FROM assets_new WHERE is_deleted = 0`)).c;
+        counts.vendors = (await ctx.get(`SELECT COUNT(*) AS c FROM vendors_new`)).c;
+        counts.repairs = (await ctx.get(`SELECT COUNT(*) AS c FROM repairs_new`)).c;
+        counts.transfers = (await ctx.get(`SELECT COUNT(*) AS c FROM transfers_new`)).c;
+        counts.users = (await ctx.get(`SELECT COUNT(*) AS c FROM app_users`)).c;
+    } catch (e) {}
+    return ok(res, {
+        version: APP_VERSION,
+        server: 'Node ' + process.version,
+        startedAt: STARTED_AT,
+        dataDir: path.dirname(path.resolve(CONFIG.dbPath)),
+        dbPath: path.resolve(CONFIG.dbPath),
+        counts: counts,
+        github: 'https://github.com/Kevin7563/it-asset-manager/releases'
+    });
+}
+
+// ── 附件下載 / ZIP 備份 ────────────────────────────────
+async function handleFileDownload(req, res, session, query) {
+    if (!isAdmin(session)) return denyReadOnly(res);
+    const target = String(query.get('path') || '');
+    const info = filesLib.readFileForDownload(path.dirname(path.resolve(CONFIG.dbPath)), target);
+    baseHeaders(res);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename*=UTF-8\'\'' + encodeURIComponent(info.name));
+    res.setHeader('Content-Length', info.size);
+    fs.createReadStream(info.fullPath).pipe(res);
+}
+
+async function handleFilesZip(res, session) {
+    if (!isAdmin(session)) return denyReadOnly(res);
+    const dataDir = path.dirname(path.resolve(CONFIG.dbPath));
+    const zip = filesLib.zipFolder(dataDir, 'vendor_files');
+    if (!zip.count) return sendJson(res, 404, { ok: false, message: '目前沒有附件檔可備份。' });
+    const stampTxt = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    baseHeaders(res);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="vendor_files_' + stampTxt + '.zip"');
+    res.setHeader('Content-Length', zip.buffer.length);
+    console.log(`[backup] attachments zip by ${session.username}: ${zip.count} files, ${zip.buffer.length} bytes`);
+    res.end(zip.buffer);
+}
+
+const STARTED_AT = new Date().toISOString();
+
+function sendXlsx(res, buffer, cnName, asciiName) {
+    baseHeaders(res);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + (asciiName || 'export.xlsx') + '"; filename*=UTF-8\'\'' + encodeURIComponent(cnName || 'export.xlsx'));
+    res.setHeader('Content-Length', buffer.length);
+    res.end(buffer);
+}
+
 function isAdmin(session) { return !!(session && session.role === 'admin'); }
 function denyReadOnly(res) { return sendJson(res, 403, { ok: false, message: '權限不足：此操作僅限管理者執行。' }); }
 function ok(res, data) { return sendJson(res, 200, Object.assign({ ok: true }, data || {})); }
@@ -260,6 +354,43 @@ async function handleWriteApi(req, res, session, p) {
         return ok(res, result);
     }
 
+    // 匯入廠商（Excel，base64）
+    if (m === 'POST' && p === '/api/import/vendors') {
+        const d = await body(req, 24 * 1024 * 1024);
+        const buf = Buffer.from(String(d.dataBase64 || ''), 'base64');
+        if (!buf.length) throw new Error('沒有收到檔案內容。');
+        const result = await service.importVendorsFromXlsx(ctx, buf, d.fileName || 'vendors.xlsx', session);
+        console.log(`[import] vendors by ${session.username}: +${result.inserted}, updated ${result.updated}, errors ${result.errors.length}`);
+        return ok(res, result);
+    }
+
+    // 廠商附件（NDA / 合約）
+    const dataDir = path.dirname(path.resolve(CONFIG.dbPath));
+    if (m === 'POST' && (mm = /^\/api\/vendors\/(\d+)\/files$/.exec(p))) {
+        const d = await body(req, 60 * 1024 * 1024);
+        const kind = (d.kind === 'contract') ? 'contract' : 'nda';
+        const result = await service.addVendorFiles(ctx, dataDir, mm[1], kind, d.files || []);
+        return ok(res, result);
+    }
+    if (m === 'POST' && (mm = /^\/api\/vendors\/(\d+)\/files\/delete$/.exec(p))) {
+        const d = await body(req);
+        const kind = (d.kind === 'contract') ? 'contract' : 'nda';
+        return ok(res, await service.removeVendorFile(ctx, dataDir, mm[1], kind, d.path));
+    }
+
+    // 廠商維護單據
+    if (m === 'POST' && (mm = /^\/api\/vendor-maint\/(\d+)\/docs$/.exec(p))) {
+        const d = await body(req, 60 * 1024 * 1024);
+        return ok(res, await service.addMaintDocs(ctx, dataDir, mm[1], d.files || []));
+    }
+    if (m === 'POST' && (mm = /^\/api\/vendor-maint\/(\d+)\/docs\/delete$/.exec(p))) {
+        const d = await body(req);
+        return ok(res, await service.removeMaintDoc(ctx, dataDir, mm[1], d.path));
+    }
+
+    // 資料庫還原
+    if (m === 'POST' && p === '/api/backup/restore') return await handleRestoreDb(req, res, session);
+
     return sendJson(res, 404, { ok: false, message: '找不到 API。' });
 }
 
@@ -317,6 +448,31 @@ async function requestHandler(req, res) {
                 if (p === '/api/users') { if (!isAdmin(session)) return denyReadOnly(res); return ok(res, { users: await service.listUsers(ctx) }); }
                 if (p === '/api/export/inventory.xlsx') return await handleExportInventory(res, session);
                 if (p === '/api/backup/db') return await handleBackupDownload(res, session);
+                if (p === '/api/backup/files') return await handleFilesZip(res, session);
+                if (p === '/api/version') return await handleVersionInfo(res, session);
+                if (p === '/api/files') return await handleFileDownload(req, res, session, parsed.searchParams);
+                if (p === '/api/export/vendors.xlsx') {
+                    const r2 = await extras.buildVendorListXlsx(ctx);
+                    return sendXlsx(res, r2.buffer, 'IT_合作廠商清單_' + r2.stamp + '.xlsx', 'IT_Vendor_List_' + r2.stamp + '.xlsx');
+                }
+                if (p === '/api/export/vendor-maint.xlsx') {
+                    const name = String(parsed.searchParams.get('name') || '');
+                    const r2 = await extras.buildVendorMaintXlsx(ctx, name);
+                    return sendXlsx(res, r2.buffer, '廠商維護歷程' + (name ? '_' + name : '') + '_' + r2.stamp + '.xlsx', 'Vendor_Maint_' + r2.stamp + '.xlsx');
+                }
+                if (p === '/api/template/assets.xlsx') {
+                    const r2 = await extras.buildAssetTemplateXlsx();
+                    return sendXlsx(res, r2.buffer, '資產資料匯入範本.xlsx', 'Asset_Import_Template.xlsx');
+                }
+                if (p === '/api/template/vendors.xlsx') {
+                    const r2 = await extras.buildVendorTemplateXlsx();
+                    return sendXlsx(res, r2.buffer, '廠商資料匯入範本.xlsx', 'Vendor_Import_Template.xlsx');
+                }
+                const mHist = /^\/api\/export\/asset-history\/(\d+)\.xlsx$/.exec(p);
+                if (mHist) {
+                    const r2 = await extras.buildAssetHistoryXlsx(ctx, mHist[1]);
+                    return sendXlsx(res, r2.buffer, '資產履歷_' + r2.assetNo + '.xlsx', 'Asset_History_' + r2.stamp + '.xlsx');
+                }
                 const mDetail = /^\/api\/assets\/(\d+)$/.exec(p);
                 if (mDetail) return ok(res, await service.getAssetDetail(ctx, mDetail[1]));
                 return sendJson(res, 404, { ok: false, message: '找不到 API。' });

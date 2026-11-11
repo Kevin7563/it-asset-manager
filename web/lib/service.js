@@ -6,6 +6,7 @@
 //   · 轉移若跨部門會自動重新編號，並同步關聯表的資產編號
 // =====================================================================
 const crypto = require('crypto');
+const filesLib = require('./files');
 
 const CAT_PREFIX_FALLBACK = { hardware: 'HW', software: 'SW', network: 'NET', peripheral: 'DEV', credentials: 'SEC' };
 const DEFAULT_CATEGORIES = [
@@ -631,6 +632,136 @@ async function importAssetsFromXlsx(ctx, buffer, fileName, user) {
     return { rows: Math.max(0, ws.rowCount - headerRowNo), inserted: inserted, skipped: skipped, errors: errors, fileName: fileName };
 }
 
+// ── 匯入廠商（Excel）────────────────────────────────
+const IMP_VENDOR_ALIASES = {
+    name: ['廠商公司名稱', '公司名稱', '廠商名稱', '廠商'],
+    representative: ['主要服務專員', '服務專員', '聯絡人'],
+    phone: ['聯絡窗口電話', '電話', '連絡電話'],
+    address: ['通訊地址', '地址'],
+    has_nda: ['資安nda狀態', 'nda狀態', 'nda'],
+    service_items: ['維護合約服務範疇', '服務範疇', '服務項目', '維護項目'],
+    maint_start: ['維護合約開始日', '合約開始日', '維護起日'],
+    maint_end: ['維護合約截止日', '合約截止日', '維護迄日']
+};
+
+async function importVendorsFromXlsx(ctx, buffer, fileName, user) {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buffer);
+    const ws = wb.getWorksheet('匯入資料') || wb.worksheets[0];
+    if (!ws) throw new Error('Excel 檔內沒有工作表。');
+
+    let headerRowNo = 0, colMap = {};
+    for (let r = 1; r <= Math.min(ws.rowCount, 15); r++) {
+        const map = {};
+        ws.getRow(r).eachCell((cell, colNo) => {
+            const h = normHeader(cellText(cell.value));
+            if (!h) return;
+            Object.keys(IMP_VENDOR_ALIASES).forEach(key => {
+                if (map[key] !== undefined) return;
+                if (IMP_VENDOR_ALIASES[key].some(a => { const na = normHeader(a); return h === na || h.indexOf(na) >= 0; })) map[key] = colNo;
+            });
+        });
+        if (map.name) { headerRowNo = r; colMap = map; break; }
+    }
+    if (!headerRowNo) throw new Error('找不到欄位標題列（需包含「廠商公司名稱」）；請使用系統下載的範本。');
+
+    const mapNda = (raw) => {
+        const h = normHeader(raw);
+        if (!h) return null;
+        if (h.indexOf('已簽') >= 0 || h === '1' || h.indexOf('是') === 0) return 1;
+        if (h.indexOf('未') >= 0 || h === '0' || h.indexOf('否') === 0) return 0;
+        return null;
+    };
+
+    const plan = { kind: 'vendor', rows: 0, inserted: 0, updated: 0, skipped: 0, errors: [], fileName: fileName };
+    const seen = {};
+    for (let r = headerRowNo + 1; r <= ws.rowCount; r++) {
+        const row = ws.getRow(r);
+        const val = (key) => colMap[key] ? cellText(row.getCell(colMap[key]).value) : '';
+        const name = str(val('name'));
+        if (!name) continue;
+        plan.rows++;
+        if (seen[name]) { plan.skipped++; continue; }
+        seen[name] = true;
+        const existing = await ctx.get(`SELECT * FROM vendors_new WHERE name = ?`, [name]);
+        const nda = mapNda(val('has_nda'));
+        try {
+            if (existing) {
+                const pick = (v, old) => (str(v) !== '') ? str(v) : (old == null ? '' : String(old));
+                await ctx.run(`UPDATE vendors_new SET representative = ?, phone = ?, address = ?, has_nda = ?, service_items = ?, maint_start = ?, maint_end = ? WHERE id = ?`, [
+                    pick(val('representative'), existing.representative),
+                    pick(val('phone'), existing.phone),
+                    pick(val('address'), existing.address),
+                    (nda === null) ? existing.has_nda : nda,
+                    pick(val('service_items'), existing.service_items),
+                    pick(normDate(val('maint_start')), existing.maint_start),
+                    pick(normDate(val('maint_end')), existing.maint_end),
+                    existing.id
+                ]);
+                plan.updated++;
+            } else {
+                await ctx.run(`INSERT INTO vendors_new (name, representative, phone, address, has_nda, service_items, maint_start, maint_end) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [
+                    name, str(val('representative')), str(val('phone')), str(val('address')),
+                    (nda === null ? 0 : nda), str(val('service_items')),
+                    normDate(val('maint_start')), normDate(val('maint_end'))
+                ]);
+                plan.inserted++;
+            }
+        } catch (e) {
+            plan.errors.push({ row: r, message: errMsg(e) });
+        }
+    }
+    return plan;
+}
+
+// ── 廠商附件（NDA / 合約）────────────────────────────
+async function addVendorFiles(ctx, dataDir, vendorId, kind, files) {
+    const vendor = await ctx.get(`SELECT * FROM vendors_new WHERE id = ?`, [parseInt(vendorId) || 0]);
+    if (!vendor) throw new Error('找不到該廠商。');
+    const k = (kind === 'contract') ? 'contract' : 'nda';
+    const col = (k === 'contract') ? 'contract_files' : 'nda_files';
+    const saved = filesLib.saveFiles(dataDir, ['vendor_files', k, String(vendor.id)], files);
+    const cur = String(vendor[col] || '').split(';').map(s => s.trim()).filter(Boolean);
+    const next = cur.concat(saved);
+    await ctx.run(`UPDATE vendors_new SET ${col} = ? WHERE id = ?`, [next.join(';'), vendor.id]);
+    return { saved: saved, count: next.length };
+}
+
+async function removeVendorFile(ctx, dataDir, vendorId, kind, targetPath) {
+    const vendor = await ctx.get(`SELECT * FROM vendors_new WHERE id = ?`, [parseInt(vendorId) || 0]);
+    if (!vendor) throw new Error('找不到該廠商。');
+    const k = (kind === 'contract') ? 'contract' : 'nda';
+    const col = (k === 'contract') ? 'contract_files' : 'nda_files';
+    const cur = String(vendor[col] || '').split(';').map(s => s.trim()).filter(Boolean);
+    if (cur.indexOf(targetPath) < 0) throw new Error('此檔案不屬於該廠商。');
+    filesLib.deleteFile(dataDir, targetPath);
+    const next = cur.filter(p => p !== targetPath);
+    await ctx.run(`UPDATE vendors_new SET ${col} = ? WHERE id = ?`, [next.join(';'), vendor.id]);
+    return { count: next.length };
+}
+
+// ── 廠商維護單據 ──────────────────────────────────────
+async function addMaintDocs(ctx, dataDir, recordId, files) {
+    const rec = await ctx.get(`SELECT * FROM vendor_maint_records WHERE id = ?`, [parseInt(recordId) || 0]);
+    if (!rec) throw new Error('找不到該維護紀錄。');
+    const saved = filesLib.saveFiles(dataDir, ['vendor_files', 'maint', String(rec.id)], files);
+    const cur = String(rec.doc_files || '').split(';').map(s => s.trim()).filter(Boolean);
+    const next = cur.concat(saved);
+    await ctx.run(`UPDATE vendor_maint_records SET doc_files = ? WHERE id = ?`, [next.join(';'), rec.id]);
+    return { saved: saved, count: next.length };
+}
+
+async function removeMaintDoc(ctx, dataDir, recordId, targetPath) {
+    const rec = await ctx.get(`SELECT * FROM vendor_maint_records WHERE id = ?`, [parseInt(recordId) || 0]);
+    if (!rec) throw new Error('找不到該維護紀錄。');
+    const cur = String(rec.doc_files || '').split(';').map(s => s.trim()).filter(Boolean);
+    if (cur.indexOf(targetPath) < 0) throw new Error('此檔案不屬於該維護紀錄。');
+    filesLib.deleteFile(dataDir, targetPath);
+    const next = cur.filter(p => p !== targetPath);
+    await ctx.run(`UPDATE vendor_maint_records SET doc_files = ? WHERE id = ?`, [next.join(';'), rec.id]);
+    return { count: next.length };
+}
+
 module.exports = {
     ensureSchema,
     listFieldOptions, addFieldOption, deleteFieldOption,
@@ -640,7 +771,8 @@ module.exports = {
     listVendors, saveVendor, deleteVendor,
     listVendorMaint, createVendorMaint, deleteVendorMaint,
     listUsers, createUserAccount, updateUserAccount, resetUserPassword, changeOwnPassword, deleteUserAccount,
-    getStats, importAssetsFromXlsx,
+    getStats, importAssetsFromXlsx, importVendorsFromXlsx,
+    addVendorFiles, removeVendorFile, addMaintDocs, removeMaintDoc,
     nextAssetNo, catCodeOf
 };
 

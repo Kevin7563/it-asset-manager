@@ -147,6 +147,7 @@
         if (name === 'vendors') { await Promise.all([loadVendors(), loadMaint()]); }
         if (name === 'fields') { await loadFieldOptions(); renderFields(); }
         if (name === 'users') { await loadUsers(); }
+        if (name === 'tools') { await loadVersionInfo(); }
     }
 
     // ── 對照表 / 選單 ───────────────────────────────────
@@ -499,10 +500,12 @@
                 + '<td style="font-size:12px;">' + period + '</td>'
                 + '<td style="text-align:center;white-space:nowrap;">'
                 + '<button class="btn btn-ghost btn-sm" data-edit-vendor="' + v.id + '">✏️ 編輯</button> '
+                + '<button class="btn btn-primary btn-sm" data-files-vendor="' + v.id + '">📎</button> '
                 + '<button class="btn btn-danger btn-sm" data-del-vendor="' + v.id + '">🗑️</button></td>';
             tbody.appendChild(tr);
         });
         tbody.querySelectorAll('[data-edit-vendor]').forEach(btn => btn.addEventListener('click', () => startEditVendor(Number(btn.getAttribute('data-edit-vendor')))));
+        tbody.querySelectorAll('[data-files-vendor]').forEach(btn => btn.addEventListener('click', () => openVendorFiles(Number(btn.getAttribute('data-files-vendor')))));
         tbody.querySelectorAll('[data-del-vendor]').forEach(btn => btn.addEventListener('click', () => removeVendor(Number(btn.getAttribute('data-del-vendor')))));
     }
 
@@ -548,9 +551,12 @@
                 + '<td>' + dash(r.maint_type) + '</td>'
                 + '<td style="text-align:right;">' + (Number(r.cost) > 0 ? money(r.cost) : '—') + '</td>'
                 + '<td style="text-align:center;">' + (r.signed ? '✅' : '—') + '</td>'
-                + '<td style="text-align:center;"><button class="btn btn-danger btn-sm" data-del-maint="' + r.id + '">🗑️</button></td>';
+                + '<td style="text-align:center;white-space:nowrap;">'
+                + '<button class="btn btn-primary btn-sm" data-files-maint="' + r.id + '">📎</button> '
+                + '<button class="btn btn-danger btn-sm" data-del-maint="' + r.id + '">🗑️</button></td>';
             tbody.appendChild(tr);
         });
+        tbody.querySelectorAll('[data-files-maint]').forEach(btn => btn.addEventListener('click', () => openMaintDocs(Number(btn.getAttribute('data-files-maint')))));
         tbody.querySelectorAll('[data-del-maint]').forEach(btn => btn.addEventListener('click', () => removeMaint(Number(btn.getAttribute('data-del-maint')))));
     }
 
@@ -967,7 +973,203 @@
         }
     }
 
-    // ── 事件綁定 / 啟動 ────────────────────────────────
+    // ── 附件管理（廠商 NDA／合約、維護單據）────────────
+    const splitPaths = (s) => String(s || '').split(';').map(x => x.trim()).filter(Boolean);
+    const fileBaseName = (p) => String(p || '').split(/[\\/]/).pop();
+
+    function readFilesAsBase64(fileList) {
+        const list = Array.prototype.slice.call(fileList || []);
+        return Promise.all(list.map(f => new Promise((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onload = () => {
+                const s = String(fr.result || '');
+                resolve({ name: f.name, dataBase64: s.indexOf(',') >= 0 ? s.slice(s.indexOf(',') + 1) : s });
+            };
+            fr.onerror = () => reject(new Error('讀取檔案失敗：' + f.name));
+            fr.readAsDataURL(f);
+        })));
+    }
+
+    async function openVendorFiles(id) {
+        const v = state.vendors.find(x => x.id === id);
+        if (!v) return;
+        const groups = [
+            { kind: 'nda', title: '🔒 NDA 資安條款', files: splitPaths(v.nda_files) },
+            { kind: 'contract', title: '📄 採購合約', files: splitPaths(v.contract_files) }
+        ];
+        renderFilesModal('📎 廠商附件 ｜ ' + v.name, 'vendor', id, groups);
+        $('files-modal').classList.remove('hidden');
+    }
+
+    async function openMaintDocs(id) {
+        const rec = state.maint.find(x => x.id === id);
+        if (!rec) return;
+        const groups = [{ kind: 'maint', title: '📎 維護單據', files: splitPaths(rec.doc_files) }];
+        renderFilesModal('🗂️ 維護單據 ｜ ' + (rec.equipment || ''), 'maint', id, groups);
+        $('files-modal').classList.remove('hidden');
+    }
+
+    function renderFilesModal(title, type, id, groups) {
+        $('files-title').textContent = title;
+        const body = $('files-body');
+        body.innerHTML = groups.map(g => {
+            const list = g.files.length
+                ? g.files.map(p => '<div class="mini-item" style="display:flex;justify-content:space-between;gap:10px;align-items:center;">'
+                    + '<a href="/api/files?path=' + encodeURIComponent(p) + '" target="_blank" style="color:#2563eb;font-weight:bold;text-decoration:none;">📄 ' + esc(fileBaseName(p)) + '</a>'
+                    + '<button type="button" class="btn btn-danger btn-sm" data-del-file="' + esc(p) + '" data-kind="' + g.kind + '">🗑️</button></div>').join('')
+                : '<div class="mini-empty">尚無檔案。</div>';
+            return '<div style="margin-bottom:18px;">'
+                + '<div style="font-weight:bold;color:#334155;margin-bottom:8px;">' + g.title + '</div>'
+                + '<div class="mini-list" style="margin-bottom:10px;">' + list + '</div>'
+                + '<div class="inline-form"><input type="file" multiple data-upload="' + g.kind + '" style="flex-grow:1;"></div>'
+                + '</div>';
+        }).join('');
+
+        body.querySelectorAll('[data-del-file]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const p = btn.getAttribute('data-del-file');
+                const kind = btn.getAttribute('data-kind') || 'nda';
+                if (!confirmBox('🗑️ 確定要刪除此附件檔案？')) return;
+                try {
+                    if (type === 'vendor') await post('/api/vendors/' + id + '/files/delete', { kind: kind, path: p });
+                    else await post('/api/vendor-maint/' + id + '/docs/delete', { path: p });
+                    toast('🗑️ 已刪除附件。', 'ok');
+                    await reloadFilesContext(type, id);
+                } catch (err) { toast('❌ ' + err.message, 'err'); }
+            });
+        });
+
+        body.querySelectorAll('[data-upload]').forEach(input => {
+            input.addEventListener('change', async () => {
+                if (!input.files || !input.files.length) return;
+                const kind = input.getAttribute('data-upload');
+                try {
+                    const files = await readFilesAsBase64(input.files);
+                    if (type === 'vendor') await post('/api/vendors/' + id + '/files', { kind: kind, files: files });
+                    else await post('/api/vendor-maint/' + id + '/docs', { files: files });
+                    toast('📎 已上傳 ' + files.length + ' 個檔案。', 'ok');
+                    await reloadFilesContext(type, id);
+                } catch (err) { toast('❌ 上傳失敗：' + err.message, 'err'); }
+            });
+        });
+    }
+
+    async function reloadFilesContext(type, id) {
+        if (type === 'vendor') { await loadVendors(); await openVendorFiles(id); }
+        else { await loadMaint(); await openMaintDocs(id); }
+    }
+
+    function closeFilesModal() { $('files-modal').classList.add('hidden'); }
+
+    // ── 報表下載 / 工具 ────────────────────────────────
+    async function downloadBlob(url, fallbackName) {
+        const res = await fetch(url, { credentials: 'same-origin' });
+        if (!res.ok) {
+            let msg = '下載失敗（HTTP ' + res.status + '）';
+            try { const d = await res.json(); if (d && d.message) msg = d.message; } catch (e) {}
+            throw new Error(msg);
+        }
+        const blob = await res.blob();
+        const u = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = u; a.download = fallbackName || 'download';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(u), 8000);
+    }
+
+    async function exportAssetHistory(id) {
+        if (!id) return;
+        try { await downloadBlob('/api/export/asset-history/' + id + '.xlsx', '資產履歷.xlsx'); toast('📤 資產履歷已開始下載。', 'ok'); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+    async function exportVendors() {
+        try { await downloadBlob('/api/export/vendors.xlsx', '合作廠商清單.xlsx'); toast('📥 廠商清單已開始下載。', 'ok'); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+    async function exportMaint() {
+        try { await downloadBlob('/api/export/vendor-maint.xlsx', '廠商維護歷程.xlsx'); toast('📥 維護歷程已開始下載。', 'ok'); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    async function importVendorsExcel() {
+        const input = $('import-vendor-file');
+        const file = input && input.files && input.files[0];
+        if (!file) { toast('⚠️ 請先選擇 .xlsx 檔案。', 'warn'); return; }
+        const btn = $('import-vendor-btn');
+        const box = $('import-vendor-result');
+        btn.disabled = true; btn.textContent = '⏳ 匯入中...';
+        try {
+            const files = await readFilesAsBase64([file]);
+            const res = await post('/api/import/vendors', { fileName: file.name, dataBase64: files[0].dataBase64 });
+            const errs = res.errors || [];
+            if (box) {
+                box.classList.remove('hidden');
+                box.innerHTML = '<strong>✅ 匯入完成</strong><div>檔案：' + esc(res.fileName || file.name) + '</div>'
+                    + '<div>新增 <b>' + res.inserted + '</b> 家　｜　更新 <b>' + res.updated + '</b> 家　｜　略過（重複）<b>' + res.skipped + '</b> 家　｜　失敗 <b>' + errs.length + '</b> 家</div>'
+                    + (errs.length ? '<div style="margin-top:8px;color:#b91c1c;">' + errs.slice(0, 10).map(x => '第 ' + x.row + ' 列：' + esc(x.message)).join('<br>') + '</div>' : '');
+            }
+            toast('✅ 廠商匯入完成：新增 ' + res.inserted + '、更新 ' + res.updated, 'ok');
+            input.value = '';
+            await loadVendors();
+        } catch (err) {
+            if (box) { box.classList.remove('hidden'); box.innerHTML = '<strong style="color:#b91c1c;">❌ 匯入失敗</strong><div>' + esc(err.message) + '</div>'; }
+            toast('❌ 匯入失敗：' + err.message, 'err');
+        } finally {
+            btn.disabled = false; btn.textContent = '📂 開始匯入';
+        }
+    }
+
+    async function downloadAttachmentsZip() {
+        try { await downloadBlob('/api/backup/files', 'vendor_files.zip'); toast('🗜️ 附件 ZIP 已開始下載。', 'ok'); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    async function restoreDatabase() {
+        const input = $('restore-file');
+        const box = $('restore-result');
+        const file = input && input.files && input.files[0];
+        if (!file) { toast('⚠️ 請先選擇 .db 備份檔。', 'warn'); return; }
+        if (String($('restore-confirm').value || '').trim().toUpperCase() !== 'RESTORE') {
+            toast('⚠️ 請在確認欄輸入 RESTORE。', 'warn'); return;
+        }
+        if (!confirmBox('♻️ 確定要還原資料庫嗎？\n目前所有資料將被此備份檔覆蓋！\n（系統會先自動備份目前資料庫）')) return;
+        const btn = $('restore-btn');
+        btn.disabled = true; btn.textContent = '⏳ 還原中...';
+        try {
+            const files = await readFilesAsBase64([file]);
+            const res = await post('/api/backup/restore', { fileName: file.name, dataBase64: files[0].dataBase64, confirm: 'RESTORE' });
+            if (box) {
+                box.classList.remove('hidden');
+                box.innerHTML = '<strong style="color:#15803d;">✅ 資料庫已還原</strong><div>還原前備份：<code>' + esc(res.safety || '') + '</code></div><div>頁面將重新載入...</div>';
+            }
+            toast('✅ 資料庫已還原，重新載入中...', 'ok');
+            setTimeout(() => window.location.reload(), 1800);
+        } catch (err) {
+            if (box) { box.classList.remove('hidden'); box.innerHTML = '<strong style="color:#b91c1c;">❌ 還原失敗</strong><div>' + esc(err.message) + '</div>'; }
+            toast('❌ 還原失敗：' + err.message, 'err');
+        } finally {
+            btn.disabled = false; btn.textContent = '♻️ 執行還原';
+        }
+    }
+
+    async function loadVersionInfo() {
+        const box = $('version-info');
+        if (!box) return;
+        try {
+            const v = await api('/api/version');
+            const c = v.counts || {};
+            box.innerHTML = '<div><strong>系統版本：</strong>v' + esc(v.version) + '（Web 版）</div>'
+                + '<div><strong>執行環境：</strong>' + esc(v.server) + '</div>'
+                + '<div><strong>啟動時間：</strong>' + esc(String(v.startedAt || '').slice(0, 19).replace('T', ' ')) + '</div>'
+                + '<div><strong>資料庫：</strong><code>' + esc(v.dbPath) + '</code></div>'
+                + '<div><strong>資料筆數：</strong>資產 ' + (c.assets || 0) + '　廠商 ' + (c.vendors || 0) + '　維修 ' + (c.repairs || 0) + '　轉移 ' + (c.transfers || 0) + '　帳號 ' + (c.users || 0) + '</div>'
+                + '<div><strong>版本紀錄：</strong><a href="' + esc(v.github || '') + '" target="_blank" style="color:#2563eb;">GitHub Releases</a></div>';
+        } catch (e) {
+            box.textContent = '無法取得版本資訊：' + e.message;
+        }
+    }
+
+
     function bind() {
         $('login-form').addEventListener('submit', doLogin);
         $('logout-btn').addEventListener('click', doLogout);
@@ -991,7 +1193,7 @@
         $('e-delete').addEventListener('click', deleteCurrentAsset);
         $('detail-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'detail-modal') closeDetail(); });
         $('edit-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'edit-modal') closeEdit(); });
-        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDetail(); closeEdit(); } });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDetail(); closeEdit(); closeFilesModal(); } });
 
         // 表單
         $('form-asset').addEventListener('submit', submitAssetForm);
@@ -1012,6 +1214,18 @@
         $('import-btn').addEventListener('click', importAssets);
         $('backup-btn').addEventListener('click', downloadBackup);
         $('goto-dashboard').addEventListener('click', () => showPage('dashboard'));
+        $('import-vendor-btn').addEventListener('click', importVendorsExcel);
+        $('backup-files-btn').addEventListener('click', downloadAttachmentsZip);
+        $('restore-btn').addEventListener('click', restoreDatabase);
+        $('tpl-assets-btn').addEventListener('click', () => { downloadBlob('/api/template/assets.xlsx', '資產資料匯入範本.xlsx').catch(e => toast('❌ ' + e.message, 'err')); });
+        $('tpl-vendors-btn').addEventListener('click', () => { downloadBlob('/api/template/vendors.xlsx', '廠商資料匯入範本.xlsx').catch(e => toast('❌ ' + e.message, 'err')); });
+
+        // 報表與附件
+        $('export-vendors-btn').addEventListener('click', exportVendors);
+        $('export-maint-btn').addEventListener('click', exportMaint);
+        $('modal-export-btn').addEventListener('click', () => exportAssetHistory(state.editingAssetId));
+        $('files-close').addEventListener('click', closeFilesModal);
+        $('files-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'files-modal') closeFilesModal(); });
     }
 
     async function boot() {

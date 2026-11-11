@@ -21,10 +21,16 @@
 | 欄位管理（自訂資產大類／部門） | ✅ |
 | 帳號管理（新增／重設密碼／角色／停用／刪除） | ✅ |
 | 匯出 Excel 盤點總表（含條碼貼紙） | ✅ |
-| 匯入資產 Excel | ✅ |
-| 資料庫備份下載 | ✅ |
-| 廠商附件（NDA／合約／維護單據） | ⛔ 尚未支援（後續版本） |
-| 資料庫還原、版本更新 | ⛔ 由伺服器端處理 |
+| 匯出單筆資產履歷（3 工作表：基本資料／維修／轉移） | ✅ |
+| 匯出廠商清單／廠商維護歷程 | ✅ |
+| 匯入資產 Excel＋空白範本下載 | ✅ |
+| 匯入廠商 Excel＋空白範本下載 | ✅ |
+| 廠商附件（NDA／合約）上傳、下載、刪除 | ✅ |
+| 廠商維護單據上傳、下載、刪除 | ✅ |
+| 資料庫備份下載、附件 ZIP 備份 | ✅ |
+| 資料庫還原（上傳 .db，還原前自動備份） | ✅ |
+| 版本與系統資訊頁 | ✅ |
+| 資料庫還原、版本更新 | ✅／版本資訊（Web 版升級由伺服器部署） |
 
 ---
 
@@ -84,12 +90,23 @@ npm run web
 | GET | `/api/field-options` | 大類／部門選項 |
 | GET | `/api/users` | 帳號清單（管理者） |
 | GET | `/api/export/inventory.xlsx` | 匯出盤點總表 |
-| GET | `/api/backup/db` | 下載資料庫備份（管理者） |
+| GET | `/api/export/asset-history/:id.xlsx` | 匯出單筆資產履歷（3 工作表） |
+| GET | `/api/export/vendors.xlsx`、`/api/export/vendor-maint.xlsx` | 廠商清單／維護歷程 |
+| GET | `/api/template/assets.xlsx`、`/api/template/vendors.xlsx` | 匯入範本 |
+| GET | `/api/files?path=…` | 附件下載（管理者，路徑白名單驗證） |
+| GET | `/api/backup/db`、`/api/backup/files` | 資料庫備份／附件 ZIP（管理者） |
+| GET | `/api/version` | 版本與系統資訊（管理者） |
 
 ### 寫入（管理者）
 `POST/PUT/DELETE /api/assets`、`/api/assets/:id/restore`、`/api/repairs`、`/api/repairs/:id/complete`、
 `/api/transfers`、`/api/vendors`、`/api/vendor-maint`、`/api/field-options`、`/api/users`、
 `/api/users/:id/password`、`POST /api/import/assets`（Excel base64）
+
+附件與備份：
+- `POST /api/import/vendors`（Excel base64）
+- `POST /api/vendors/:id/files`、`POST /api/vendors/:id/files/delete`
+- `POST /api/vendor-maint/:id/docs`、`POST /api/vendor-maint/:id/docs/delete`
+- `POST /api/backup/restore`（需 `confirm: "RESTORE"`）
 
 `POST /api/me/password` 任何登入者皆可使用（需驗證目前密碼）。
 
@@ -124,8 +141,8 @@ nssm start ITAssetWeb
 
 ## 7. 已知限制
 
-- 廠商附件（NDA／合約／維護單據）尚未提供上傳下載
-- 資料庫還原需在伺服器上手動替換檔案（避免誤操作）
 - Session 存在記憶體：重啟服務後使用者需重新登入
 - 多人「同時編輯同一筆資產」採後寫入覆蓋，尚無鎖定機制
+- 資料庫還原會**完全覆蓋**目前資料（系統會自動先備份到 `backups\`），請務必確認來源檔正確
+- 附件檔存放於 `<資料庫所在資料夾>\vendor_files\`，搬家時請一併複製
 
