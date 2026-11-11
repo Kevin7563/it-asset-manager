@@ -444,6 +444,25 @@
                         </div>
                         <div id="import-backup-result" class="result-box hidden"></div>
                     </div>
+                    <div class="card" style="border-left:4px solid #8b5cf6;">
+                        <h3 class="card-title">🔧 附件路徑修復（附件點不開時使用）</h3>
+                        <div class="tip-mini">
+                            📌 單機版若把附件存在<b>自訂資料夾</b>（例如 <code>D:\CITRMS\CIT資產管理系統資料</code>），匯入資料庫後 Web 版找不到那些檔案，點附件會出現「檔案路徑不合法」。<br>
+                            👉 請在單機版把那個資料夾 <b>按右鍵 → 傳送到 → 壓縮的資料夾</b> 做成 ZIP，在這裡上傳；系統會解壓到 <code>&lt;資料庫資料夾&gt;\imported_files\</code>，並自動把資料庫內的路徑改指到新位置。
+                        </div>
+                        <div class="inline-form">
+                            <span class="count" id="att-status" style="flex-grow:1;">附件狀態：檢查中...</span>
+                            <button type="button" class="btn btn-ghost btn-sm" id="att-status-btn">🔄 重新檢查</button>
+                        </div>
+                        <div class="inline-form" style="margin-top:10px;">
+                            <input type="file" id="att-fix-files" accept=".zip" multiple style="flex-grow:1;">
+                            <button type="button" class="btn btn-primary" id="att-fix-btn">🔧 修復附件路徑</button>
+                        </div>
+                        <div class="tip-mini" style="margin-top:8px;">
+                            💡 也可以把檔案<b>直接複製</b>到 <code>&lt;資料庫資料夾&gt;\imported_files\</code>（保留原本資料夾結構），再按一次「修復附件路徑」（不用選檔）即可重新對應。
+                        </div>
+                        <div id="att-fix-result" class="result-box hidden"></div>
+                    </div>
                     <div class="card" style="border-left:4px solid #ef4444;">
                         <h3 class="card-title" style="color:#b91c1c;">♻️ 資料庫還原（危險操作）</h3>
                         <div class="tip-mini warn">⚠️ 還原會<b>覆蓋目前所有資料</b>。系統會先自動備份目前資料庫到資料夾下的 <code>backups</code>。請在確認欄輸入 <b>RESTORE</b> 才會執行。</div>

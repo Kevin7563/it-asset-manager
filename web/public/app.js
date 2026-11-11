@@ -160,7 +160,7 @@
         if (name === 'vendor-maint-add') { await loadVendors(); }
         if (name === 'fields') { await loadFieldOptions(); renderFields(); }
         if (name === 'users') { await loadUsers(); }
-        if (name === 'tools') { await loadVersionInfo(); }
+        if (name === 'tools') { await Promise.all([loadVersionInfo(), loadAttachmentStatus()]); }
     }
 
     // ── 對照表 / 選單 ───────────────────────────────────
@@ -1434,6 +1434,56 @@
         }
     }
 
+    async function loadAttachmentStatus() {
+        const box = $('att-status');
+        if (!box) return;
+        try {
+            const s = await api('/api/attachments/status');
+            if (!s.total) { box.innerHTML = '附件狀態：目前沒有附件紀錄。'; box.title = ''; return; }
+            box.innerHTML = '附件狀態：可用 <b style="color:#15803d;">' + s.existing + '</b> ／ 缺少 <b style="color:#b91c1c;">' + s.missing + '</b>（共 ' + s.total + ' 個路徑）';
+            box.title = (s.samples && s.samples.length) ? ('缺少範例：\n' + s.samples.join('\n')) : '';
+        } catch (err) {
+            box.textContent = '附件狀態：無法取得（' + err.message + '）';
+        }
+    }
+
+    async function repairAttachmentFiles() {
+        const input = $('att-fix-files');
+        const box = $('att-fix-result');
+        const btn = $('att-fix-btn');
+        const list = (input && input.files) ? Array.prototype.slice.call(input.files) : [];
+        const confirmMsg = list.length
+            ? '🔧 要解壓並修復附件路徑嗎？\n檔案會存到資料庫旁的 imported_files 資料夾，並改寫資料庫內的附件路徑。'
+            : '🔧 未選擇 ZIP：將只重新掃描已放在 vendor_files／imported_files 內的附件並重新對應，要繼續嗎？';
+        if (!confirmBox(confirmMsg)) return;
+        btn.disabled = true;
+        const old = btn.textContent;
+        btn.textContent = '⏳ 處理中...';
+        try {
+            const files = await readFilesAsBase64(list);
+            const res = await post('/api/import/attachments', { files: files });
+            if (box) {
+                box.classList.remove('hidden');
+                box.innerHTML = '<strong style="color:#15803d;">✅ 附件修復完成</strong>'
+                    + '<div>解壓檔案：' + (res.extracted || 0) + ' 個　｜　可對應檔案：' + (res.placed || 0) + ' 個　｜　路徑修正：' + (res.repointed || 0) + ' 個</div>'
+                    + '<div>修復前：可用 ' + ((res.before || {}).existing || 0) + ' ／ 缺少 ' + ((res.before || {}).missing || 0) + '</div>'
+                    + '<div>修復後：可用 <b style="color:#15803d;">' + ((res.after || {}).existing || 0) + '</b> ／ 缺少 ' + ((res.after || {}).missing || 0) + '</div>'
+                    + (((res.after || {}).samples || []).length ? '<div style="font-size:12px;color:#b45309;margin-top:6px;">仍缺少（前 5 筆）：<br>' + (res.after.samples || []).map(esc).join('<br>') + '</div>' : '')
+                    + ((res.warnings && res.warnings.length) ? '<div style="color:#b45309;">⚠️ ' + esc(res.warnings.join('；')) + '</div>' : '')
+                    + '<div style="font-size:12px;color:#64748b;">請按 F5 重新整理後再點附件確認。</div>';
+            }
+            toast('✅ 附件路徑修復完成。', 'ok');
+            await loadAttachmentStatus();
+        } catch (err) {
+            if (box) { box.classList.remove('hidden'); box.innerHTML = '<strong style="color:#b91c1c;">❌ 修復失敗</strong><div>' + esc(err.message) + '</div>'; }
+            toast('❌ 修復失敗：' + err.message, 'err');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = old;
+            if (input) input.value = '';
+        }
+    }
+
     async function loadVersionInfo() {
         const box = $('version-info');
         if (!box) return;
@@ -1524,6 +1574,8 @@
         $('backup-files-btn').addEventListener('click', downloadAttachmentsZip);
         $('restore-btn').addEventListener('click', restoreDatabase);
         $('import-backup-btn').addEventListener('click', importDesktopBackupFiles);
+        $('att-status-btn').addEventListener('click', loadAttachmentStatus);
+        $('att-fix-btn').addEventListener('click', repairAttachmentFiles);
         $('tpl-assets-btn').addEventListener('click', () => { downloadBlob('/api/template/assets.xlsx', '資產資料匯入範本.xlsx').catch(e => toast('❌ ' + e.message, 'err')); });
         $('tpl-vendors-btn').addEventListener('click', () => { downloadBlob('/api/template/vendors.xlsx', '廠商資料匯入範本.xlsx').catch(e => toast('❌ ' + e.message, 'err')); });
 

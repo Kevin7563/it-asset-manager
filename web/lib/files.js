@@ -21,6 +21,13 @@ function isInside(baseDir, target) {
 
 function ensureDir(dir) { try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {} }
 
+// 需要回 400（使用者可修正）的錯誤
+function badRequest(msg) {
+    const err = new Error(msg);
+    err.status = 400;
+    return err;
+}
+
 // 儲存上傳檔案（files: [{ name, dataBase64 }]）→ 回傳絕對路徑陣列
 function saveFiles(dataDir, subParts, files) {
     const dir = path.join.apply(path, [dataDir].concat(subParts));
@@ -40,14 +47,16 @@ function saveFiles(dataDir, subParts, files) {
 }
 
 function deleteFile(dataDir, absPath) {
-    if (!absPath || !isInside(dataDir, absPath)) throw new Error('檔案路徑不合法。');
+    if (!absPath || !isInside(dataDir, absPath)) throw badRequest('檔案路徑不合法。');
     if (fs.existsSync(absPath)) fs.unlinkSync(absPath);
     return true;
 }
 
 function readFileForDownload(dataDir, absPath) {
-    if (!absPath || !isInside(dataDir, absPath)) throw new Error('檔案路徑不合法。');
-    if (!fs.existsSync(absPath)) throw new Error('找不到檔案。');
+    if (!absPath || !isInside(dataDir, absPath)) {
+        throw badRequest('檔案路徑不合法：此路徑不在資料庫資料夾內（可能來自單機版的自訂路徑，請用「🔧 附件路徑修復」重新對應）。');
+    }
+    if (!fs.existsSync(absPath)) throw badRequest('找不到檔案：' + absPath);
     return { fullPath: absPath, name: path.basename(absPath), size: fs.statSync(absPath).size };
 }
 

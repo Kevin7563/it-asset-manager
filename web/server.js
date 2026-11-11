@@ -277,6 +277,27 @@ async function handleImportDesktopBackup(req, res, session) {
     return ok(res, result);
 }
 
+// ── 附件路徑狀態／修復（上傳單機版附件資料夾 ZIP）──────────
+async function handleAttachmentsStatus(res, session) {
+    if (!isAdmin(session)) return denyReadOnly(res);
+    const dataDir = path.dirname(path.resolve(CONFIG.dbPath));
+    return ok(res, await importer.checkStoredPaths(ctx, dataDir));
+}
+
+async function handleRepairAttachments(req, res, session) {
+    if (!isAdmin(session)) return denyReadOnly(res);
+    const d = await body(req, 400 * 1024 * 1024);
+    const list = Array.isArray(d.files) ? d.files : [];
+    const files = list
+        .map(f => ({ name: String((f && f.name) || ''), buffer: Buffer.from(String((f && f.dataBase64) || ''), 'base64') }))
+        .filter(f => f.buffer.length);
+    if (list.length && !files.length) throw new Error('檔案內容為空。');
+    const dataDir = path.dirname(path.resolve(CONFIG.dbPath));
+    const result = await importer.repairAttachments({ ctx: ctx, dataDir: dataDir, files: files });
+    console.log(`[attachments] repair by ${session.username}: extracted=${result.extracted} repointed=${result.repointed} valid=${result.after.existing}/${result.after.total}`);
+    return ok(res, result);
+}
+
 // ── 版本資訊 ───────────────────────────────────────────
 async function handleVersionInfo(res, session) {
     if (!isAdmin(session)) return denyReadOnly(res);
@@ -463,6 +484,8 @@ async function handleWriteApi(req, res, session, p) {
 
     // 📥 匯入單機版備份（.zip／.db）：覆蓋資料表、保留帳號、附件一併還原
     if (m === 'POST' && p === '/api/import/desktop-backup') return await handleImportDesktopBackup(req, res, session);
+    // 🔧 附件路徑修復（上傳單機版自訂附件資料夾 ZIP）
+    if (m === 'POST' && p === '/api/import/attachments') return await handleRepairAttachments(req, res, session);
 
     return sendJson(res, 404, { ok: false, message: '找不到 API。' });
 }
@@ -523,6 +546,7 @@ async function requestHandler(req, res) {
                 if (p === '/api/backup/db') return await handleBackupDownload(res, session);
                 if (p === '/api/backup/files') return await handleFilesZip(res, session);
                 if (p === '/api/version') return await handleVersionInfo(res, session);
+                if (p === '/api/attachments/status') return await handleAttachmentsStatus(res, session);
                 if (p === '/api/files') return await handleFileDownload(req, res, session, parsed.searchParams);
                 if (p === '/api/export/vendors.xlsx') {
                     const r2 = await extras.buildVendorListXlsx(ctx);

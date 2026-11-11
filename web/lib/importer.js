@@ -25,6 +25,10 @@ const colListSql = (cols) => cols.map(c => '"' + c + '"').join(', ');
 const placeholders = (cols) => cols.map(() => '?').join(', ');
 
 // ── ZIP 內容分類 ───────────────────────────────────────
+//  · vendor_files/**  → 附件區（維持原路徑）
+//  · 其他檔案（例如單機版自訂的 D:\CITRMS\... 資料夾）
+//    → 解壓到 <資料庫資料夾>\imported_files\<原相對路徑>，再由路徑比對自動接回
+const SKIP_FILE = /(^|\/)(thumbs\.db|desktop\.ini|\.ds_store)$/i;
 function collectFromZip(buffer) {
     const entries = readZip(buffer);
     const dbCandidates = [];
@@ -33,13 +37,44 @@ function collectFromZip(buffer) {
         const base = e.name.split('/').pop();
         if (/\.db$/i.test(base)) { dbCandidates.push({ name: e.name, size: e.data.length, data: e.data }); return; }
         if (/\.(db-wal|db-shm)$/i.test(base)) return;
-        if (/^(backups|updates)\//i.test(e.name)) return;
+        if (/^(backups|updates|imported_files)\//i.test(e.name)) return;   // 備份區／更新區／已匯入區不重複處理
+        if (SKIP_FILE.test(e.name)) return;
+        if (/^\./.test(base)) return;
+        const isVendor = /vendor_files\//i.test(e.name);
         const idx = e.name.toLowerCase().indexOf('vendor_files/');
-        if (idx < 0) return;                       // 資料庫只會參照 vendor_files，其餘忽略
-        files.push({ rel: e.name.slice(idx), size: e.data.length, data: e.data });
+        const rel = isVendor ? e.name.slice(idx) : e.name;
+        files.push({ rel: rel, kind: isVendor ? 'vendor' : 'other', size: e.data.length, data: e.data });
     });
     return { dbCandidates: dbCandidates, files: files };
 }
+
+// ── 附件落地 ───────────────────────────────────────────
+function writeAttachments(dataDir, files) {
+    const written = [];
+    const warnings = [];
+    (files || []).forEach(f => {
+        const rel = String(f.rel || '').replace(/\//g, path.sep);
+        const dest = (f.kind === 'vendor')
+            ? path.join(dataDir, rel)
+            : path.join(dataDir, 'imported_files', rel);
+        if (!filesLib.isInside(dataDir, dest)) { warnings.push('略過不安全路徑：' + f.rel); return; }
+        try {
+            filesLib.ensureDir(path.dirname(dest));
+            fs.writeFileSync(dest, f.data);
+        } catch (err) {
+            warnings.push('附件寫入失敗：' + f.rel + '（' + (err.code || err.message) + '）');
+            return;
+        }
+        written.push({
+            rel: String(f.rel || '').replace(/\\/g, '/'),
+            abs: dest,
+            base: path.basename(dest).toLowerCase(),
+            kind: f.kind || 'other'
+        });
+    });
+    return { written: written, warnings: warnings };
+}
+
 
 // ── 匯入前備份 ─────────────────────────────────────────
 async function backupCurrent(ctx, dbPath) {
@@ -75,19 +110,41 @@ async function copyTable(srcCtx, ctx, table) {
 }
 
 // ── 附件路徑改指向新資料夾 ─────────────────────────────
+//   比對順序：① vendor_files 相對路徑 ② 尾段路徑（最長優先）③ 檔名
 function makePathMapper(dataDir, written) {
     const byBase = {};
-    written.forEach(w => { if (!byBase[w.base]) byBase[w.base] = w.abs; });
+    const byRel = [];
+    written.forEach(w => {
+        if (!byBase[w.base]) byBase[w.base] = w.abs;
+        byRel.push({ relLower: String(w.rel || '').toLowerCase(), abs: w.abs, depth: String(w.rel || '').split('/').length });
+    });
+    byRel.sort((a, b) => b.depth - a.depth);
+
+    const splitSegs = (p) => String(p).replace(/\\/g, '/').split('/').filter(s => s && s !== '.' && s !== '..');
+
     return function mapPath(oldPath) {
         const p = String(oldPath || '').trim();
         if (!p) return p;
+
+        // ① 標準附件區（vendor_files/...）
         const m = /vendor_files[\\/](.+)$/i.exec(p);
         if (m) {
             const candidate = path.join(dataDir, 'vendor_files', m[1].replace(/[\\/]/g, path.sep));
             if (filesLib.isInside(dataDir, candidate) && fs.existsSync(candidate)) return candidate;
         }
+
+        // ② 尾段路徑比對（例：舊 D:\CITRMS\...\客服部-XX\相關文件\保密條款\a.pdf ↔ 客服部-XX/相關文件/保密條款/a.pdf）
+        const segs = splitSegs(p);
+        for (let k = Math.min(segs.length, 8); k >= 2; k--) {
+            const suffix = '/' + segs.slice(-k).join('/').toLowerCase();
+            const hit = byRel.find(w => w.relLower === suffix.slice(1) || w.relLower.endsWith(suffix));
+            if (hit) return hit.abs;
+        }
+
+        // ③ 檔名比對
         const base = path.basename(p).toLowerCase();
         if (byBase[base]) return byBase[base];
+
         return p;                                  // 找不到就保留原字串（檔案名稱仍可顯示）
     };
 }
@@ -100,13 +157,17 @@ async function repointFilePaths(ctx, dataDir, written) {
         const cols = FILE_COLUMNS[table];
         const rows = await ctx.all(`SELECT id, ${colListSql(cols)} FROM "${table}"`);
         const updates = [];
+        let pathChanged = 0;
         rows.forEach(r => {
             const next = {};
             let dirty = false;
             cols.forEach(c => {
                 const cur = String(r[c] || '');
                 if (!cur.trim()) return;
-                const mapped = cur.split(';').map(s => s.trim()).filter(Boolean).map(mapPath).join(';');
+                const before = cur.split(';').map(s => s.trim()).filter(Boolean);
+                const after = before.map(mapPath);
+                pathChanged += after.filter((v, i) => v !== before[i]).length;
+                const mapped = after.join(';');
                 if (mapped !== cur) { next[c] = mapped; dirty = true; }
             });
             if (dirty) updates.push({ id: r.id, next: next });
@@ -119,9 +180,91 @@ async function repointFilePaths(ctx, dataDir, written) {
                 await t.run(`UPDATE "${table}" SET ${sets} WHERE id = ?`, keys.map(k => u.next[k]).concat([u.id]));
             }
         });
-        changed += updates.reduce((n, u) => n + Object.keys(u.next).length, 0);
+        changed += pathChanged;
     }
     return changed;
+}
+
+// ── 已放在資料夾內的附件（手動複製也能重新對應）────────
+function listPlacedFiles(dataDir) {
+    const out = [];
+    const walk = (root, kind, relBase) => {
+        if (!fs.existsSync(root)) return;
+        const stack = [{ dir: root, rel: '' }];
+        while (stack.length) {
+            const cur = stack.pop();
+            let items = [];
+            try { items = fs.readdirSync(cur.dir, { withFileTypes: true }); } catch (e) { continue; }
+            items.forEach(d => {
+                const full = path.join(cur.dir, d.name);
+                const rel = cur.rel ? (cur.rel + '/' + d.name) : d.name;
+                if (d.isDirectory()) stack.push({ dir: full, rel: rel });
+                else if (d.isFile()) {
+                    if (/\.(db|db-wal|db-shm)$/i.test(d.name)) return;
+                    out.push({
+                        rel: (relBase ? (relBase + '/' + rel) : rel),
+                        abs: full,
+                        base: d.name.toLowerCase(),
+                        kind: kind
+                    });
+                }
+            });
+        }
+    };
+    walk(path.join(dataDir, 'vendor_files'), 'vendor', 'vendor_files');
+    walk(path.join(dataDir, 'imported_files'), 'other', '');   // imported_files 之下即為原資料夾結構
+    return out;
+}
+
+// ── 附件可用性檢查 ─────────────────────────────────────
+async function checkStoredPaths(ctx, dataDir) {
+    let total = 0, existing = 0;
+    const missing = [];
+    for (const table of Object.keys(FILE_COLUMNS)) {
+        const cols = FILE_COLUMNS[table];
+        const rows = await ctx.all(`SELECT id, ${colListSql(cols)} FROM "${table}"`);
+        rows.forEach(r => cols.forEach(c => {
+            String(r[c] || '').split(';').map(s => s.trim()).filter(Boolean).forEach(p => {
+                total++;
+                if (filesLib.isInside(dataDir, p) && fs.existsSync(p)) existing++;
+                else missing.push(p);
+            });
+        }));
+    }
+    return { total: total, existing: existing, missing: missing.length, samples: missing.slice(0, 5) };
+}
+
+// ── 附件路徑修復（上傳單機版附件資料夾 ZIP，重新對應 DB 內路徑）──
+async function repairAttachments(opts) {
+    const ctx = opts.ctx;
+    const dataDir = opts.dataDir;
+    const uploads = opts.files || [];
+    let attachments = [];
+    uploads.forEach(f => {
+        if (!/\.zip$/i.test(f.name || '')) throw new Error('附件修復請上傳 .zip 檔（可一次多選）。');
+        attachments = attachments.concat(collectFromZip(f.buffer).files);
+    });
+    const before = await checkStoredPaths(ctx, dataDir);
+    const w = writeAttachments(dataDir, attachments);
+
+    // 已放在 vendor_files／imported_files 的檔案（手動複製的也納入比對）
+    const index = [];
+    const seen = {};
+    w.written.concat(listPlacedFiles(dataDir)).forEach(x => {
+        const key = String(x.abs).toLowerCase();
+        if (seen[key]) return;
+        seen[key] = 1;
+        index.push(x);
+    });
+
+    const repointed = index.length ? await repointFilePaths(ctx, dataDir, index) : 0;
+    const after = await checkStoredPaths(ctx, dataDir);
+    return {
+        extracted: w.written.length,
+        placed: index.length,
+        repointed: repointed,
+        before: before, after: after, warnings: w.warnings
+    };
 }
 
 // ── 主流程 ─────────────────────────────────────────────
@@ -187,23 +330,15 @@ async function importDesktopBackup(opts) {
         }
 
         // 2) 附件檔
-        const written = [];
-        attachments.forEach(f => {
-            const dest = path.join(dataDir, f.rel.replace(/\//g, path.sep));
-            if (!filesLib.isInside(dataDir, dest)) { result.warnings.push('略過不安全路徑：' + f.rel); return; }
-            try {
-                filesLib.ensureDir(path.dirname(dest));
-                fs.writeFileSync(dest, f.data);
-            } catch (err) {
-                result.warnings.push('附件寫入失敗：' + f.rel + '（' + (err.code || err.message) + '）');
-                return;
-            }
-            written.push({ rel: f.rel, abs: dest, base: path.basename(dest).toLowerCase() });
-        });
-        result.attachments = written.length;
+        const w = writeAttachments(dataDir, attachments);
+        result.attachments = w.written.length;
+        if (w.warnings.length) result.warnings = result.warnings.concat(w.warnings);
 
         // 3) 附件路徑改指向新位置
-        if (written.length) result.repointed = await repointFilePaths(ctx, dataDir, written);
+        if (w.written.length) result.repointed = await repointFilePaths(ctx, dataDir, w.written);
+
+        // 4) 附件可用性統計
+        result.fileStatus = await checkStoredPaths(ctx, dataDir);
 
         return result;
     } finally {
@@ -212,5 +347,5 @@ async function importDesktopBackup(opts) {
     }
 }
 
-module.exports = { importDesktopBackup, collectFromZip };
+module.exports = { importDesktopBackup, repairAttachments, checkStoredPaths, collectFromZip, writeAttachments, listPlacedFiles };
 
