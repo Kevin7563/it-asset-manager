@@ -39,21 +39,21 @@
             <div class="side-brand">📋 IT 資產管理<span>Web</span></div>
             <nav id="side-nav">
                 <div class="nav-item active" data-page="dashboard">📊 總覽看板</div>
-                <div class="nav-group" data-admin>📁 資訊資產管理</div>
-                <div class="nav-item sub" data-admin data-page="asset-new">➕ 新增資訊資產</div>
-                <div class="nav-item sub" data-admin data-page="repairs">🔧 資訊資產維修</div>
-                <div class="nav-item sub" data-admin data-page="transfers">🔄 資訊資產轉移</div>
-                <div class="nav-item sub" data-admin data-page="recycle">🗑️ 資源回收桶</div>
-                <div class="nav-group" data-admin>🏢 廠商管理</div>
-                <div class="nav-item sub" data-admin data-page="vendor-board">📊 廠商管理看板</div>
-                <div class="nav-item subsub" data-admin data-page="vendors">➕ 新增廠商資訊</div>
-                <div class="nav-item subsub" data-admin data-page="vendor-edit">✏️ 廠商資料維護</div>
-                <div class="nav-item sub" data-admin data-page="vendor-maint-log">🗂️ 廠商維護歷程看板</div>
-                <div class="nav-item subsub" data-admin data-page="vendor-maint-add">📝 新增廠商維護紀錄</div>
-                <div class="nav-group" data-admin>⚙️ 系統管理</div>
-                <div class="nav-item sub" data-admin data-page="fields">🧩 欄位管理</div>
-                <div class="nav-item sub" data-admin data-page="users">👥 帳號管理</div>
-                <div class="nav-item sub" data-admin data-page="tools">📥 匯入／備份</div>
+                <div class="nav-group" data-perm="asset">📁 資訊資產管理</div>
+                <div class="nav-item sub" data-perm="asset" data-page="asset-new">➕ 新增資訊資產</div>
+                <div class="nav-item sub" data-perm="asset" data-page="repairs">🔧 資訊資產維修</div>
+                <div class="nav-item sub" data-perm="asset" data-page="transfers">🔄 資訊資產轉移</div>
+                <div class="nav-item sub" data-perm="asset" data-page="recycle">🗑️ 資源回收桶</div>
+                <div class="nav-group" data-perm="vendor">🏢 廠商管理</div>
+                <div class="nav-item sub" data-perm="vendor" data-page="vendor-board">📊 廠商管理看板</div>
+                <div class="nav-item subsub" data-perm="vendor" data-page="vendors">➕ 新增廠商資訊</div>
+                <div class="nav-item subsub" data-perm="vendor" data-page="vendor-edit">✏️ 廠商資料維護</div>
+                <div class="nav-item sub" data-perm="vendor" data-page="vendor-maint-log">🗂️ 廠商維護歷程看板</div>
+                <div class="nav-item subsub" data-perm="vendor" data-page="vendor-maint-add">📝 新增廠商維護紀錄</div>
+                <div class="nav-group" data-perm="all">⚙️ 系統管理</div>
+                <div class="nav-item sub" data-perm="all" data-page="fields">🧩 欄位管理</div>
+                <div class="nav-item sub" data-perm="all" data-page="users">👥 帳號管理</div>
+                <div class="nav-item sub" data-perm="all" data-page="tools">📥 匯入／備份</div>
                 <div class="nav-item sub" data-page="password">🔒 修改我的密碼</div>
             </nav>
             <div class="side-foot">
@@ -392,7 +392,15 @@
                             <div class="form-group"><label>帳號 (英數 3~32 碼)</label><input type="text" id="u-username" maxlength="32" placeholder="例：mis01" required></div>
                             <div class="form-group"><label>顯示名稱</label><input type="text" id="u-display" placeholder="例：王小明"></div>
                             <div class="form-group"><label>密碼（新增必填；編輯時留空不改）</label><input type="password" id="u-password" placeholder="至少 4 碼"></div>
-                            <div class="form-group"><label>角色</label><select id="u-role"><option value="user">👤 一般使用者（查詢／匯出）</option><option value="admin">👑 管理者（全部功能）</option></select></div>
+                            <div class="form-group form-full">
+                                <label>權限（可多選；勾「全功能」＝系統管理員）</label>
+                                <div class="perm-box" id="u-perms">
+                                    <label class="perm-item"><input type="checkbox" id="u-perm-all" value="all"> <b>全功能</b><span class="perm-desc">所有功能都能使用（admin 預設）</span></label>
+                                    <label class="perm-item"><input type="checkbox" id="u-perm-query" value="query"> <b>一般查詢與報表匯出</b><span class="perm-desc">總覽查詢、Excel 報表匯出</span></label>
+                                    <label class="perm-item"><input type="checkbox" id="u-perm-vendor" value="vendor"> <b>廠商管理</b><span class="perm-desc">廠商資料、維護歷程、附件</span></label>
+                                    <label class="perm-item"><input type="checkbox" id="u-perm-asset" value="asset"> <b>資產管理</b><span class="perm-desc">資產、維修、轉移、回收桶</span></label>
+                                </div>
+                            </div>
                             <div class="form-group"><label>狀態</label><select id="u-active"><option value="1">✅ 啟用</option><option value="0">⛔ 停用</option></select></div>
                             <div class="form-full" style="text-align:right;">
                                 <button type="button" class="btn btn-ghost" id="u-cancel" style="margin-right:8px;">取消編輯 / 清空</button>
@@ -404,7 +412,7 @@
                         <h3 class="card-title">📋 帳號清單</h3>
                         <div class="table-wrap">
                             <table id="users-table">
-                                <thead><tr><th style="width:150px;">帳號</th><th>顯示名稱</th><th style="width:110px;text-align:center;">角色</th><th style="width:80px;text-align:center;">狀態</th><th style="width:150px;">最後登入</th><th style="width:330px;text-align:center;">操作</th></tr></thead>
+                                <thead><tr><th style="width:140px;">帳號</th><th>顯示名稱</th><th style="width:210px;text-align:center;">權限</th><th style="width:70px;text-align:center;">狀態</th><th style="width:140px;">最後登入</th><th style="width:220px;text-align:center;">操作</th></tr></thead>
                                 <tbody></tbody>
                             </table>
                         </div>

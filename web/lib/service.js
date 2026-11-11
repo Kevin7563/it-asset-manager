@@ -25,6 +25,25 @@ const DEFAULT_DEPARTMENTS = [
 const STATUS_VALUES = ['active', 'inventory', 'repair', 'scrapped'];
 const ROLE_VALUES = ['admin', 'user'];
 
+// ── 權限代碼（勾選式）─────────────────────────────────
+//   all   ：全功能（等於系統管理員）
+//   query ：一般查詢與報表匯出
+//   vendor：廠商管理（廠商／維護歷程／附件）
+//   asset ：資產管理（資產／維修／轉移／回收桶）
+const PERM_CODES = ['all', 'query', 'vendor', 'asset'];
+const PERM_LABELS = { all: '全功能', query: '一般查詢與報表匯出', vendor: '廠商管理', asset: '資產管理' };
+
+function normalizePerms(input) {
+    let list = Array.isArray(input) ? input.slice() : String(input == null ? '' : input).split(',');
+    list = list.map(s => String(s || '').trim().toLowerCase()).filter(s => PERM_CODES.indexOf(s) >= 0);
+    if (list.indexOf('all') >= 0) return ['all'];
+    const out = PERM_CODES.filter(c => c !== 'all' && list.indexOf(c) >= 0);
+    return out.length ? out : ['query'];
+}
+const parsePerms = (text) => normalizePerms(text);
+const permsToText = (list) => normalizePerms(list).join(',');
+const roleFromPerms = (list) => (normalizePerms(list).indexOf('all') >= 0 ? 'admin' : 'user');
+
 const hashPassword = (password, salt) => crypto.scryptSync(String(password), String(salt), 64).toString('hex');
 
 async function ensureSchema(ctx) {
@@ -40,6 +59,14 @@ async function ensureSchema(ctx) {
     await ctx.exec(`CREATE TABLE IF NOT EXISTS web_sessions (sid TEXT PRIMARY KEY, user_id INTEGER, username TEXT, display_name TEXT, role TEXT, created_at INTEGER, expires INTEGER)`);
     // ✏️ 編輯鎖定（避免兩人同時編輯同一筆）
     await ctx.exec(`CREATE TABLE IF NOT EXISTS edit_locks (entity TEXT, entity_id INTEGER, username TEXT, sid TEXT, acquired INTEGER, expires INTEGER, PRIMARY KEY (entity, entity_id))`);
+
+    // 🎛️ 權限升級：role(admin/user) → perms(all/query/vendor/asset)
+    const permCols = (await ctx.all(`SELECT name FROM pragma_table_info('app_users')`)).map(c => c.name);
+    if (permCols.indexOf('perms') < 0) await ctx.exec(`ALTER TABLE app_users ADD COLUMN perms TEXT`);
+    await ctx.run(`UPDATE app_users SET perms = CASE WHEN role = 'admin' THEN 'all' ELSE 'query' END WHERE perms IS NULL OR TRIM(perms) = ''`);
+    const sessCols = (await ctx.all(`SELECT name FROM pragma_table_info('web_sessions')`)).map(c => c.name);
+    if (sessCols.indexOf('perms') < 0) await ctx.exec(`ALTER TABLE web_sessions ADD COLUMN perms TEXT`);
+    await ctx.run(`UPDATE web_sessions SET perms = CASE WHEN role = 'admin' THEN 'all' ELSE 'query' END WHERE perms IS NULL OR TRIM(perms) = ''`);
 
     // 🧩 舊版資料庫相容升級
     const aCols = (await ctx.all(`SELECT name FROM pragma_table_info('assets_new')`)).map(c => c.name);
@@ -419,7 +446,8 @@ async function deleteVendorMaint(ctx, id) {
 }
 
 // ── 帳號 ──────────────────────────────────────────────
-const listUsers = (ctx) => ctx.all(`SELECT id, username, display_name, role, is_active, created_at, last_login FROM app_users ORDER BY (role = 'admin') DESC, id ASC`);
+const listUsers = async (ctx) => (await ctx.all(`SELECT id, username, display_name, role, perms, is_active, created_at, last_login FROM app_users ORDER BY (role = 'admin') DESC, id ASC`))
+    .map(u => Object.assign({}, u, { perms: parsePerms(u.perms || (u.role === 'admin' ? 'all' : 'query')) }));
 
 function verifyPasswordRaw(password, salt, storedHash) {
     try {
@@ -431,36 +459,47 @@ function verifyPasswordRaw(password, salt, storedHash) {
 
 async function createUserRecord(q, u) {
     const salt = crypto.randomBytes(16).toString('hex');
-    await q.run(`INSERT INTO app_users (username, display_name, password_hash, password_salt, role, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    const perms = normalizePerms(u.perms !== undefined ? u.perms : (u.role === 'admin' ? ['all'] : ['query']));
+    const role = roleFromPerms(perms);
+    await q.run(`INSERT INTO app_users (username, display_name, password_hash, password_salt, role, perms, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [u.username, u.displayName || u.username, hashPassword(u.password, salt), salt,
-            (u.role === 'admin') ? 'admin' : 'user', (u.isActive === false) ? 0 : 1, nowISO()]);
+            role, permsToText(perms), (u.isActive === false) ? 0 : 1, nowISO()]);
 }
 
 async function createUserAccount(ctx, data) {
     const username = str(data && data.username);
     const password = String((data && data.password) || '');
-    const role = (data && data.role === 'admin') ? 'admin' : 'user';
+    const perms = normalizePerms(data && data.perms !== undefined ? data.perms : ((data && data.role === 'admin') ? ['all'] : ['query']));
     if (!/^[A-Za-z0-9._-]{3,32}$/.test(username)) throw new Error('帳號請使用 3~32 位英文、數字或 . _ -。');
     if (password.length < 4) throw new Error('密碼長度至少 4 碼。');
     const dup = await ctx.get(`SELECT id FROM app_users WHERE username = ? COLLATE NOCASE`, [username]);
     if (dup) throw new Error('帳號「' + username + '」已存在。');
-    await createUserRecord(ctx, { username: username, displayName: str(data.displayName) || username, password: password, role: role, isActive: !(data && data.isActive === false) });
-    return { username: username, role: role };
+    await createUserRecord(ctx, {
+        username: username, displayName: str(data.displayName) || username,
+        password: password, perms: perms, isActive: !(data && data.isActive === false)
+    });
+    return { username: username, perms: perms, role: roleFromPerms(perms) };
 }
 
 async function updateUserAccount(ctx, id, data, actor) {
     const target = await ctx.get(`SELECT * FROM app_users WHERE id = ?`, [parseInt(id) || 0]);
     if (!target) throw new Error('找不到該帳號。');
     const displayName = str(data && data.displayName) || target.display_name || target.username;
-    const role = (data && data.role === 'admin') ? 'admin' : ((data && data.role === 'user') ? 'user' : target.role);
+    const curPerms = parsePerms(target.perms || (target.role === 'admin' ? 'all' : 'query'));
+    const perms = normalizePerms(
+        data && data.perms !== undefined ? data.perms
+            : (data && data.role ? (data.role === 'admin' ? ['all'] : ['query']) : curPerms));
+    const role = roleFromPerms(perms);
     const isActive = (data && data.isActive !== undefined) ? !!data.isActive : !!target.is_active;
-    if (actor && actor.id === target.id && (role !== 'admin' || !isActive)) throw new Error('不可停用或降級「目前登入中」的帳號。');
-    if (target.role === 'admin' && target.is_active && (role !== 'admin' || !isActive)) {
+    const stillAdmin = role === 'admin';
+    if (actor && actor.id === target.id && (!stillAdmin || !isActive)) throw new Error('不可停用或移除「目前登入中」帳號的「全功能」權限。');
+    if (target.role === 'admin' && target.is_active && (!stillAdmin || !isActive)) {
         const others = await ctx.get(`SELECT COUNT(*) AS c FROM app_users WHERE role = 'admin' AND is_active = 1 AND id != ?`, [target.id]);
-        if (!others || !others.c) throw new Error('系統至少要保留一個啟用中的管理者帳號。');
+        if (!others || !others.c) throw new Error('系統至少要保留一個啟用中且具「全功能」權限的帳號。');
     }
-    await ctx.run(`UPDATE app_users SET display_name = ?, role = ?, is_active = ? WHERE id = ?`, [displayName, role, isActive ? 1 : 0, target.id]);
-    return { id: target.id, username: target.username };
+    await ctx.run(`UPDATE app_users SET display_name = ?, role = ?, perms = ?, is_active = ? WHERE id = ?`,
+        [displayName, role, permsToText(perms), isActive ? 1 : 0, target.id]);
+    return { id: target.id, username: target.username, perms: perms, role: role, isActive: isActive };
 }
 
 async function resetUserPassword(ctx, id, newPassword) {
@@ -824,6 +863,7 @@ async function removeMaintDoc(ctx, dataDir, recordId, targetPath) {
 
 module.exports = {
     ensureSchema,
+    PERM_CODES, PERM_LABELS, normalizePerms, parsePerms, permsToText, roleFromPerms,
     listFieldOptions, addFieldOption, deleteFieldOption,
     listAssets, listRecycle, createAsset, updateAsset, deleteAsset, restoreAsset, getAssetDetail,
     listRepairs, createRepair, completeRepair, deleteRepair,

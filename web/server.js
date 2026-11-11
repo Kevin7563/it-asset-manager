@@ -96,7 +96,12 @@ function clientIp(req) {
     return fwd || (req.socket && req.socket.remoteAddress) || 'unknown';
 }
 
-const publicUser = (s) => ({ username: s.username, displayName: s.displayName, role: s.role });
+const publicUser = (s) => ({
+    username: s.username,
+    displayName: s.displayName,
+    role: (s.perms || []).indexOf('all') >= 0 ? 'admin' : 'user',
+    perms: Array.isArray(s.perms) && s.perms.length ? s.perms : ((s.role === 'admin') ? ['all'] : ['query'])
+});
 
 // ── 靜態檔案（白名單，避免路徑穿越）────────────────────
 const STATIC_FILES = {
@@ -210,11 +215,11 @@ function makeSessionStore(c) {
     return {
         loadAll: async (now) => {
             try { await c.run(`DELETE FROM web_sessions WHERE expires <= ?`, [now]); } catch (e) {}
-            const rows = await c.all(`SELECT sid, user_id, username, display_name, role, created_at, expires FROM web_sessions`);
-            return rows.map(r => ({ sid: r.sid, id: r.user_id, username: r.username, displayName: r.display_name, role: r.role, createdAt: r.created_at, expires: r.expires }));
+            const rows = await c.all(`SELECT sid, user_id, username, display_name, role, perms, created_at, expires FROM web_sessions`);
+            return rows.map(r => ({ sid: r.sid, id: r.user_id, username: r.username, displayName: r.display_name, role: r.role, perms: service.parsePerms(r.perms || (r.role === 'admin' ? 'all' : 'query')), createdAt: r.created_at, expires: r.expires }));
         },
-        insert: (s) => c.run(`INSERT OR REPLACE INTO web_sessions (sid, user_id, username, display_name, role, created_at, expires) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [s.sid, s.id, s.username, s.displayName, s.role, s.createdAt, s.expires]),
+        insert: (s) => c.run(`INSERT OR REPLACE INTO web_sessions (sid, user_id, username, display_name, role, perms, created_at, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [s.sid, s.id, s.username, s.displayName, s.role, service.permsToText(s.perms || []), s.createdAt, s.expires]),
         remove: (sid) => c.run(`DELETE FROM web_sessions WHERE sid = ?`, [sid]),
         removeByUser: (id) => c.run(`DELETE FROM web_sessions WHERE user_id = ?`, [id])
     };
@@ -322,7 +327,6 @@ async function handleVersionInfo(res, session) {
 
 // ── 附件下載 / ZIP 備份 ────────────────────────────────
 async function handleFileDownload(req, res, session, query) {
-    if (!isAdmin(session)) return denyReadOnly(res);
     const target = String(query.get('path') || '');
     const info = filesLib.readFileForDownload(path.dirname(path.resolve(CONFIG.dbPath)), target);
     baseHeaders(res);
@@ -356,60 +360,84 @@ function sendXlsx(res, buffer, cnName, asciiName) {
     res.end(buffer);
 }
 
-function isAdmin(session) { return !!(session && session.role === 'admin'); }
-function denyReadOnly(res) { return sendJson(res, 403, { ok: false, message: '權限不足：此操作僅限管理者執行。' }); }
+// ── 權限判斷（勾選式：all / query / vendor / asset）──────
+function permsOf(session) {
+    if (session && Array.isArray(session.perms) && session.perms.length) return session.perms;
+    return (session && session.role === 'admin') ? ['all'] : ['query'];
+}
+function hasPerm(session, perm) {
+    const list = permsOf(session);
+    return list.indexOf('all') >= 0 || list.indexOf(perm) >= 0;
+}
+// 「全功能」＝系統管理員（帳號管理、欄位管理、備份還原／版本資訊）
+function isAdmin(session) { return hasPerm(session, 'all'); }
+function denyPerm(res, label) {
+    return sendJson(res, 403, { ok: false, message: '權限不足：需要「' + label + '」權限。' });
+}
+function need(res, session, perm, label) {
+    if (hasPerm(session, perm)) return true;
+    denyPerm(res, label);
+    return false;
+}
+function denyReadOnly(res) { return denyPerm(res, '全功能'); }
 function ok(res, data) { return sendJson(res, 200, Object.assign({ ok: true }, data || {})); }
 async function body(req, limit) {
     try { return await readJsonBody(req, limit || (4 * 1024 * 1024)); }
     catch (e) { throw new Error(e.message || '請求內容格式錯誤。'); }
 }
 
-// ── 寫入 API（一律需管理者）─────────────────────────────
+// ── 寫入 API（依權限勾選判斷）───────────────────────────
 async function handleWriteApi(req, res, session, p) {
-    if (!isAdmin(session)) return denyReadOnly(res);
     const m = req.method;
     let mm;
+    const canAsset = () => need(res, session, 'asset', '資產管理');
+    const canVendor = () => need(res, session, 'vendor', '廠商管理');
+    const canAdmin = () => need(res, session, 'all', '全功能');
 
-    // 資產
-    if (m === 'POST' && p === '/api/assets') return ok(res, await service.createAsset(ctx, await body(req), session));
-    if (m === 'PUT' && (mm = /^\/api\/assets\/(\d+)$/.exec(p))) return ok(res, await service.updateAsset(ctx, mm[1], await body(req), session));
-    if (m === 'DELETE' && (mm = /^\/api\/assets\/(\d+)$/.exec(p))) return ok(res, { asset: await service.deleteAsset(ctx, mm[1], session) });
-    if (m === 'POST' && (mm = /^\/api\/assets\/(\d+)\/restore$/.exec(p))) return ok(res, { asset: await service.restoreAsset(ctx, mm[1], session) });
+    // 資產（資產管理權限）
+    if (m === 'POST' && p === '/api/assets') { if (!canAsset()) return; return ok(res, await service.createAsset(ctx, await body(req), session)); }
+    if (m === 'PUT' && (mm = /^\/api\/assets\/(\d+)$/.exec(p))) { if (!canAsset()) return; return ok(res, await service.updateAsset(ctx, mm[1], await body(req), session)); }
+    if (m === 'DELETE' && (mm = /^\/api\/assets\/(\d+)$/.exec(p))) { if (!canAsset()) return; return ok(res, { asset: await service.deleteAsset(ctx, mm[1], session) }); }
+    if (m === 'POST' && (mm = /^\/api\/assets\/(\d+)\/restore$/.exec(p))) { if (!canAsset()) return; return ok(res, { asset: await service.restoreAsset(ctx, mm[1], session) }); }
 
-    // 維修
-    if (m === 'POST' && p === '/api/repairs') return ok(res, await service.createRepair(ctx, await body(req), session));
-    if (m === 'POST' && (mm = /^\/api\/repairs\/(\d+)\/complete$/.exec(p))) return ok(res, await service.completeRepair(ctx, mm[1], session));
-    if (m === 'DELETE' && (mm = /^\/api\/repairs\/(\d+)$/.exec(p))) return ok(res, { repair: await service.deleteRepair(ctx, mm[1]) });
+    // 維修（資產管理權限）
+    if (m === 'POST' && p === '/api/repairs') { if (!canAsset()) return; return ok(res, await service.createRepair(ctx, await body(req), session)); }
+    if (m === 'POST' && (mm = /^\/api\/repairs\/(\d+)\/complete$/.exec(p))) { if (!canAsset()) return; return ok(res, await service.completeRepair(ctx, mm[1], session)); }
+    if (m === 'DELETE' && (mm = /^\/api\/repairs\/(\d+)$/.exec(p))) { if (!canAsset()) return; return ok(res, { repair: await service.deleteRepair(ctx, mm[1]) }); }
 
-    // 轉移
-    if (m === 'POST' && p === '/api/transfers') return ok(res, await service.createTransfer(ctx, await body(req), session));
-    if (m === 'DELETE' && (mm = /^\/api\/transfers\/(\d+)$/.exec(p))) return ok(res, { transfer: await service.deleteTransfer(ctx, mm[1]) });
+    // 轉移（資產管理權限）
+    if (m === 'POST' && p === '/api/transfers') { if (!canAsset()) return; return ok(res, await service.createTransfer(ctx, await body(req), session)); }
+    if (m === 'DELETE' && (mm = /^\/api\/transfers\/(\d+)$/.exec(p))) { if (!canAsset()) return; return ok(res, { transfer: await service.deleteTransfer(ctx, mm[1]) }); }
 
-    // 廠商
-    if (m === 'POST' && p === '/api/vendors') return ok(res, await service.saveVendor(ctx, await body(req), session));
+    // 廠商（廠商管理權限）
+    if (m === 'POST' && p === '/api/vendors') { if (!canVendor()) return; return ok(res, await service.saveVendor(ctx, await body(req), session)); }
     if (m === 'PUT' && (mm = /^\/api\/vendors\/(\d+)$/.exec(p))) {
+        if (!canVendor()) return;
         const d = await body(req); d.id = parseInt(mm[1], 10);
         return ok(res, await service.saveVendor(ctx, d, session));
     }
-    if (m === 'DELETE' && (mm = /^\/api\/vendors\/(\d+)$/.exec(p))) return ok(res, { vendor: await service.deleteVendor(ctx, mm[1]) });
+    if (m === 'DELETE' && (mm = /^\/api\/vendors\/(\d+)$/.exec(p))) { if (!canVendor()) return; return ok(res, { vendor: await service.deleteVendor(ctx, mm[1]) }); }
 
-    // 廠商維護紀錄
-    if (m === 'POST' && p === '/api/vendor-maint') return ok(res, await service.createVendorMaint(ctx, await body(req), session));
-    if (m === 'DELETE' && (mm = /^\/api\/vendor-maint\/(\d+)$/.exec(p))) return ok(res, { record: await service.deleteVendorMaint(ctx, mm[1]) });
+    // 廠商維護紀錄（廠商管理權限）
+    if (m === 'POST' && p === '/api/vendor-maint') { if (!canVendor()) return; return ok(res, await service.createVendorMaint(ctx, await body(req), session)); }
+    if (m === 'DELETE' && (mm = /^\/api\/vendor-maint\/(\d+)$/.exec(p))) { if (!canVendor()) return; return ok(res, { record: await service.deleteVendorMaint(ctx, mm[1]) }); }
 
-    // 欄位管理
-    if (m === 'POST' && p === '/api/field-options') return ok(res, await service.addFieldOption(ctx, await body(req)));
-    if (m === 'DELETE' && (mm = /^\/api\/field-options\/(\d+)$/.exec(p))) return ok(res, { option: await service.deleteFieldOption(ctx, mm[1]) });
+    // 欄位管理（全功能）
+    if (m === 'POST' && p === '/api/field-options') { if (!canAdmin()) return; return ok(res, await service.addFieldOption(ctx, await body(req))); }
+    if (m === 'DELETE' && (mm = /^\/api\/field-options\/(\d+)$/.exec(p))) { if (!canAdmin()) return; return ok(res, { option: await service.deleteFieldOption(ctx, mm[1]) }); }
 
-    // 帳號管理
-    if (m === 'POST' && p === '/api/users') return ok(res, await service.createUserAccount(ctx, await body(req)));
+    // 帳號管理（全功能）
+    if (m === 'POST' && p === '/api/users') { if (!canAdmin()) return; return ok(res, await service.createUserAccount(ctx, await body(req))); }
     if (m === 'PUT' && (mm = /^\/api\/users\/(\d+)$/.exec(p))) {
+        if (!canAdmin()) return;
         const uid = parseInt(mm[1], 10);
         const out = await service.updateUserAccount(ctx, uid, await body(req), { id: session.id });
-        if (uid !== session.id) auth.invalidateUser(uid);   // 改角色／停用 → 立即踢出該使用者
+        if (out && out.isActive === false) auth.invalidateUser(uid);            // 停用 → 立即踢出
+        else auth.updateUserSessions(uid, { perms: out.perms, role: out.role }); // 改權限 → 直接生效
         return ok(res, out);
     }
     if (m === 'POST' && (mm = /^\/api\/users\/(\d+)\/password$/.exec(p))) {
+        if (!canAdmin()) return;
         const uid = parseInt(mm[1], 10);
         const d = await body(req);
         const out = await service.resetUserPassword(ctx, uid, d.newPassword);
@@ -417,14 +445,16 @@ async function handleWriteApi(req, res, session, p) {
         return ok(res, out);
     }
     if (m === 'DELETE' && (mm = /^\/api\/users\/(\d+)$/.exec(p))) {
+        if (!canAdmin()) return;
         const uid = parseInt(mm[1], 10);
         const out = await service.deleteUserAccount(ctx, uid, { id: session.id });
         auth.invalidateUser(uid);
         return ok(res, out);
     }
 
-    // 匯入資產（Excel，base64）
+    // 匯入資產（Excel，base64）→ 資產管理
     if (m === 'POST' && p === '/api/import/assets') {
+        if (!canAsset()) return;
         const d = await body(req, 24 * 1024 * 1024);
         const b64 = String(d.dataBase64 || '');
         if (!b64) throw new Error('沒有收到檔案內容。');
@@ -435,8 +465,9 @@ async function handleWriteApi(req, res, session, p) {
         return ok(res, result);
     }
 
-    // 匯入廠商（Excel，base64）
+    // 匯入廠商（Excel，base64）→ 廠商管理
     if (m === 'POST' && p === '/api/import/vendors') {
+        if (!canVendor()) return;
         const d = await body(req, 24 * 1024 * 1024);
         const buf = Buffer.from(String(d.dataBase64 || ''), 'base64');
         if (!buf.length) throw new Error('沒有收到檔案內容。');
@@ -445,33 +476,38 @@ async function handleWriteApi(req, res, session, p) {
         return ok(res, result);
     }
 
-    // 廠商附件（NDA / 合約）
+    // 廠商附件（NDA / 合約）→ 廠商管理
     const dataDir = path.dirname(path.resolve(CONFIG.dbPath));
     if (m === 'POST' && (mm = /^\/api\/vendors\/(\d+)\/files$/.exec(p))) {
+        if (!canVendor()) return;
         const d = await body(req, 60 * 1024 * 1024);
         const kind = (d.kind === 'contract') ? 'contract' : 'nda';
         const result = await service.addVendorFiles(ctx, dataDir, mm[1], kind, d.files || []);
         return ok(res, result);
     }
     if (m === 'POST' && (mm = /^\/api\/vendors\/(\d+)\/files\/delete$/.exec(p))) {
+        if (!canVendor()) return;
         const d = await body(req);
         const kind = (d.kind === 'contract') ? 'contract' : 'nda';
         return ok(res, await service.removeVendorFile(ctx, dataDir, mm[1], kind, d.path));
     }
 
-    // 廠商維護單據
+    // 廠商維護單據 → 廠商管理
     if (m === 'POST' && (mm = /^\/api\/vendor-maint\/(\d+)\/docs$/.exec(p))) {
+        if (!canVendor()) return;
         const d = await body(req, 60 * 1024 * 1024);
         return ok(res, await service.addMaintDocs(ctx, dataDir, mm[1], d.files || []));
     }
     if (m === 'POST' && (mm = /^\/api\/vendor-maint\/(\d+)\/docs\/delete$/.exec(p))) {
+        if (!canVendor()) return;
         const d = await body(req);
         return ok(res, await service.removeMaintDoc(ctx, dataDir, mm[1], d.path));
     }
 
-    // 編輯鎖定
+    // 編輯鎖定（依實體對應權限）
     if (m === 'POST' && p === '/api/locks/acquire') {
         const d = await body(req);
+        if (!need(res, session, d.entity === 'vendor' ? 'vendor' : 'asset', d.entity === 'vendor' ? '廠商管理' : '資產管理')) return;
         return ok(res, await service.acquireLock(ctx, d.entity, d.id, session));
     }
     if (m === 'POST' && p === '/api/locks/release') {
@@ -479,13 +515,13 @@ async function handleWriteApi(req, res, session, p) {
         return ok(res, await service.releaseLock(ctx, d.entity, d.id, session));
     }
 
-    // 資料庫還原
-    if (m === 'POST' && p === '/api/backup/restore') return await handleRestoreDb(req, res, session);
+    // 資料庫還原（全功能）
+    if (m === 'POST' && p === '/api/backup/restore') { if (!canAdmin()) return; return await handleRestoreDb(req, res, session); }
 
-    // 📥 匯入單機版備份（.zip／.db）：覆蓋資料表、保留帳號、附件一併還原
-    if (m === 'POST' && p === '/api/import/desktop-backup') return await handleImportDesktopBackup(req, res, session);
-    // 🔧 附件路徑修復（上傳單機版自訂附件資料夾 ZIP）
-    if (m === 'POST' && p === '/api/import/attachments') return await handleRepairAttachments(req, res, session);
+    // 📥 匯入單機版備份（.zip／.db）（全功能）
+    if (m === 'POST' && p === '/api/import/desktop-backup') { if (!canAdmin()) return; return await handleImportDesktopBackup(req, res, session); }
+    // 🔧 附件路徑修復（全功能）
+    if (m === 'POST' && p === '/api/import/attachments') { if (!canAdmin()) return; return await handleRepairAttachments(req, res, session); }
 
     return sendJson(res, 404, { ok: false, message: '找不到 API。' });
 }
@@ -534,39 +570,53 @@ async function requestHandler(req, res) {
             if (req.method === 'GET') {
                 if (p === '/api/me') return sendJson(res, 200, { ok: true, user: publicUser(session) });
                 if (p === '/api/assets') { const assets = await service.listAssets(ctx); return ok(res, { count: assets.length, assets: assets }); }
-                if (p === '/api/recycle') { if (!isAdmin(session)) return denyReadOnly(res); const list = await service.listRecycle(ctx); return ok(res, { count: list.length, assets: list }); }
+                if (p === '/api/recycle') { if (!need(res, session, 'asset', '資產管理')) return; const list = await service.listRecycle(ctx); return ok(res, { count: list.length, assets: list }); }
                 if (p === '/api/stats') return ok(res, await service.getStats(ctx));
                 if (p === '/api/field-options') return ok(res, await service.listFieldOptions(ctx));
                 if (p === '/api/repairs') return ok(res, { repairs: await service.listRepairs(ctx) });
                 if (p === '/api/transfers') return ok(res, { transfers: await service.listTransfers(ctx) });
-                if (p === '/api/vendors') return ok(res, { vendors: await service.listVendors(ctx) });
-                if (p === '/api/vendor-maint') return ok(res, { records: await service.listVendorMaint(ctx) });
+                if (p === '/api/vendors') {
+                    if (!hasPerm(session, 'vendor') && !hasPerm(session, 'asset')) return denyPerm(res, '廠商管理 或 資產管理');
+                    return ok(res, { vendors: await service.listVendors(ctx) });
+                }
+                if (p === '/api/vendor-maint') { if (!need(res, session, 'vendor', '廠商管理')) return; return ok(res, { records: await service.listVendorMaint(ctx) }); }
                 if (p === '/api/users') { if (!isAdmin(session)) return denyReadOnly(res); return ok(res, { users: await service.listUsers(ctx) }); }
-                if (p === '/api/export/inventory.xlsx') return await handleExportInventory(res, session);
+                if (p === '/api/export/inventory.xlsx') {
+                    if (!hasPerm(session, 'query') && !hasPerm(session, 'asset')) return denyPerm(res, '一般查詢與報表匯出 或 資產管理');
+                    return await handleExportInventory(res, session);
+                }
                 if (p === '/api/backup/db') return await handleBackupDownload(res, session);
                 if (p === '/api/backup/files') return await handleFilesZip(res, session);
                 if (p === '/api/version') return await handleVersionInfo(res, session);
                 if (p === '/api/attachments/status') return await handleAttachmentsStatus(res, session);
-                if (p === '/api/files') return await handleFileDownload(req, res, session, parsed.searchParams);
+                if (p === '/api/files') {
+                    if (!need(res, session, 'vendor', '廠商管理')) return;
+                    return await handleFileDownload(req, res, session, parsed.searchParams);
+                }
                 if (p === '/api/export/vendors.xlsx') {
+                    if (!hasPerm(session, 'query') && !hasPerm(session, 'vendor')) return denyPerm(res, '一般查詢與報表匯出 或 廠商管理');
                     const r2 = await extras.buildVendorListXlsx(ctx);
                     return sendXlsx(res, r2.buffer, 'IT_合作廠商清單_' + r2.stamp + '.xlsx', 'IT_Vendor_List_' + r2.stamp + '.xlsx');
                 }
                 if (p === '/api/export/vendor-maint.xlsx') {
+                    if (!hasPerm(session, 'query') && !hasPerm(session, 'vendor')) return denyPerm(res, '一般查詢與報表匯出 或 廠商管理');
                     const name = String(parsed.searchParams.get('name') || '');
                     const r2 = await extras.buildVendorMaintXlsx(ctx, name);
                     return sendXlsx(res, r2.buffer, '廠商維護歷程' + (name ? '_' + name : '') + '_' + r2.stamp + '.xlsx', 'Vendor_Maint_' + r2.stamp + '.xlsx');
                 }
                 if (p === '/api/template/assets.xlsx') {
+                    if (!need(res, session, 'asset', '資產管理')) return;
                     const r2 = await extras.buildAssetTemplateXlsx();
                     return sendXlsx(res, r2.buffer, '資產資料匯入範本.xlsx', 'Asset_Import_Template.xlsx');
                 }
                 if (p === '/api/template/vendors.xlsx') {
+                    if (!need(res, session, 'vendor', '廠商管理')) return;
                     const r2 = await extras.buildVendorTemplateXlsx();
                     return sendXlsx(res, r2.buffer, '廠商資料匯入範本.xlsx', 'Vendor_Import_Template.xlsx');
                 }
                 const mHist = /^\/api\/export\/asset-history\/(\d+)\.xlsx$/.exec(p);
                 if (mHist) {
+                    if (!hasPerm(session, 'query') && !hasPerm(session, 'asset')) return denyPerm(res, '一般查詢與報表匯出 或 資產管理');
                     const r2 = await extras.buildAssetHistoryXlsx(ctx, mHist[1]);
                     return sendXlsx(res, r2.buffer, '資產履歷_' + r2.assetNo + '.xlsx', 'Asset_History_' + r2.stamp + '.xlsx');
                 }

@@ -27,11 +27,22 @@
         fields: '🧩 欄位管理', users: '👥 帳號管理', tools: '📥 匯入／備份', password: '🔒 修改我的密碼'
     };
 
+    // 🎛️ 權限：all 全功能／query 一般查詢與報表匯出／vendor 廠商管理／asset 資產管理
+    const PERM_LABELS = { all: '全功能', query: '一般查詢與報表匯出', vendor: '廠商管理', asset: '資產管理' };
+    const PERM_BADGE = { all: 'role-admin', query: 'role-user', vendor: 'role-vendor', asset: 'role-asset' };
+    const PAGE_PERMS = {
+        'asset-new': ['asset'], repairs: ['asset'], transfers: ['asset'], recycle: ['asset'],
+        'vendor-board': ['vendor'], vendors: ['vendor'], 'vendor-edit': ['vendor'],
+        'vendor-maint-log': ['vendor'], 'vendor-maint-add': ['vendor'],
+        fields: ['all'], users: ['all'], tools: ['all']
+    };
+
     const state = {
         user: null, isAdmin: false,
         assets: [], vendors: [], repairs: [], transfers: [], maint: [], recycle: [], users: [],
         catOpts: [], depOpts: [], categories: {}, departments: {},
         locks: { asset: {}, vendor: {} }, lockedAsset: 0, lockedVendor: 0,
+        perms: [],
         vendorKeyword: '', vendorEditKeyword: '', maintKeyword: '', pendingVendorId: 0, vendorModalId: 0,
         maintSort: 'desc', maintModalId: 0,
         keyword: '', page: 'dashboard', editingAssetId: 0, editingUserId: 0, editingUpdatedAt: ''
@@ -80,7 +91,10 @@
 
     function showApp(user) {
         state.user = user;
-        state.isAdmin = user.role === 'admin';
+        state.perms = (Array.isArray(user.perms) && user.perms.length)
+            ? user.perms
+            : (user.role === 'admin' ? ['all'] : ['query']);
+        state.isAdmin = can('all');
         $('login-view').classList.add('hidden');
         $('app-view').classList.remove('hidden');
         applyRoleUI();
@@ -111,7 +125,7 @@
 
     async function doLogout() {
         try { await post('/api/logout'); } catch (e) {}
-        state.user = null; state.isAdmin = false;
+        state.user = null; state.isAdmin = false; state.perms = [];
         state.assets = []; state.users = [];
         document.querySelectorAll('table tbody').forEach(tb => { tb.innerHTML = ''; });
         ['detail-modal', 'edit-modal', 'vendor-modal', 'maint-modal', 'files-modal'].forEach(id => { const m = $(id); if (m) m.classList.add('hidden'); });
@@ -120,18 +134,35 @@
     }
 
     // ── 導覽 / 權限 ─────────────────────────────────────
+    function can(perm) {
+        const list = Array.isArray(state.perms) ? state.perms : [];
+        return list.indexOf('all') >= 0 || list.indexOf(perm) >= 0;
+    }
+    const canAny = (list) => (list || []).some(can);
+
     function applyRoleUI() {
-        document.querySelectorAll('[data-admin]').forEach(el => el.classList.toggle('hidden', !state.isAdmin));
-        const label = state.user ? ((state.user.role === 'admin' ? '👑 ' : '👤 ') + (state.user.displayName || state.user.username)) : '—';
-        const chip = $('user-chip'); if (chip) chip.textContent = label;
+        document.querySelectorAll('[data-admin]').forEach(el => el.classList.toggle('hidden', !can('all')));
+        // 側邊選單：依 data-perm 顯示（含群組標題）
+        document.querySelectorAll('#side-nav [data-perm]').forEach(el => {
+            el.classList.toggle('hidden', !can(el.getAttribute('data-perm')));
+        });
+        // 保險：再依頁面需求校正一次（沒有 data-perm 的項目，例如密碼）
+        document.querySelectorAll('#side-nav .nav-item').forEach(el => {
+            const page = el.getAttribute('data-page');
+            const req = PAGE_PERMS[page];
+            if (req) el.classList.toggle('hidden', !canAny(req));
+        });
+        const icon = can('all') ? '👑 ' : '👤 ';
+        const label = state.user ? (icon + (state.user.displayName || state.user.username)) : '—';
+        const chip = $('user-chip'); if (chip) { chip.textContent = label; chip.title = '權限：' + (state.perms.map(p => PERM_LABELS[p] || p).join('、') || '—'); }
         const side = $('side-user'); if (side) side.textContent = label;
     }
 
     async function showPage(name) {
         if (!PAGE_TITLES[name]) name = 'dashboard';
-        const adminPages = ['asset-new', 'repairs', 'transfers', 'recycle', 'vendor-board', 'vendors', 'vendor-edit', 'vendor-maint-log', 'vendor-maint-add', 'fields', 'users', 'tools'];
-        if (!state.isAdmin && adminPages.indexOf(name) >= 0) {
-            toast('⛔ 權限不足：此功能僅限管理者使用。', 'warn');
+        const req = PAGE_PERMS[name];
+        if (req && !canAny(req)) {
+            toast('⛔ 權限不足：需要「' + req.map(p => PERM_LABELS[p] || p).join(' 或 ') + '」權限。', 'warn');
             return;
         }
         // 離開廠商維護頁時釋放編輯鎖
@@ -372,7 +403,7 @@
                 }).join('');
 
             const editBtn = $('modal-edit-btn');
-            if (editBtn) editBtn.style.display = state.isAdmin ? '' : 'none';
+            if (editBtn) editBtn.style.display = can('asset') ? '' : 'none';
             $('detail-modal').classList.remove('hidden');
         } catch (err) { toast('❌ 載入履歷失敗：' + err.message, 'err'); }
     }
@@ -875,31 +906,60 @@
         if (!state.users.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">尚無帳號。</td></tr>'; return; }
         state.users.forEach(u => {
             const self = state.user && u.id === state.user.id;
-            const roleBadge = u.role === 'admin' ? '<span class="role-pill role-admin">👑 管理者</span>' : '<span class="role-pill role-user">👤 一般</span>';
+            const perms = (Array.isArray(u.perms) && u.perms.length) ? u.perms : (u.role === 'admin' ? ['all'] : ['query']);
+            const roleBadge = perms.map(p => '<span class="role-pill ' + (PERM_BADGE[p] || 'role-user') + '">' + (PERM_LABELS[p] || p) + '</span>').join(' ');
             const activeBadge = u.is_active ? '<span class="badge badge-active">啟用</span>' : '<span class="badge badge-scrapped">停用</span>';
             const tr = document.createElement('tr');
             tr.innerHTML = '<td><strong>' + esc(u.username) + '</strong>' + (self ? '<div class="sub" style="color:#2563eb;">（目前登入）</div>' : '') + '</td>'
                 + '<td>' + esc(u.display_name || '') + '</td>'
-                + '<td style="text-align:center;">' + roleBadge + '</td>'
+                + '<td style="text-align:center;line-height:1.9;">' + roleBadge + '</td>'
                 + '<td style="text-align:center;">' + activeBadge + '</td>'
                 + '<td style="font-size:12px;" class="sub">' + (u.last_login ? esc(String(u.last_login).slice(0, 19).replace('T', ' ')) : '—') + '</td>'
                 + '<td style="text-align:center;white-space:nowrap;">'
                 + '<button class="btn btn-ghost btn-sm" data-edit-user="' + u.id + '">✏️</button> '
                 + '<button class="btn btn-primary btn-sm" data-reset-pw="' + u.id + '">🔑</button> '
-                + '<button class="btn btn-ghost btn-sm" data-toggle-role="' + u.id + '">🔁</button> '
                 + '<button class="btn btn-sm" style="background:' + (u.is_active ? '#f59e0b' : '#10b981') + ';color:#fff;" data-toggle-active="' + u.id + '">' + (u.is_active ? '⛔' : '✅') + '</button> '
                 + '<button class="btn btn-danger btn-sm" data-del-user="' + u.id + '">🗑️</button></td>';
             tbody.appendChild(tr);
         });
         tbody.querySelectorAll('[data-edit-user]').forEach(b => b.addEventListener('click', () => startEditUser(Number(b.getAttribute('data-edit-user')))));
         tbody.querySelectorAll('[data-reset-pw]').forEach(b => b.addEventListener('click', () => resetUserPassword(Number(b.getAttribute('data-reset-pw')))));
-        tbody.querySelectorAll('[data-toggle-role]').forEach(b => b.addEventListener('click', () => toggleRole(Number(b.getAttribute('data-toggle-role')))));
         tbody.querySelectorAll('[data-toggle-active]').forEach(b => b.addEventListener('click', () => toggleActive(Number(b.getAttribute('data-toggle-active')))));
         tbody.querySelectorAll('[data-del-user]').forEach(b => b.addEventListener('click', () => removeUser(Number(b.getAttribute('data-del-user')))));
     }
 
+    // 權限勾選：全功能 與 其他項目互斥
+    function setUserPermChecks(list) {
+        const perms = Array.isArray(list) ? list : String(list || '').split(',');
+        ['all', 'query', 'vendor', 'asset'].forEach(p => {
+            const el = $('u-perm-' + p);
+            if (el) el.checked = perms.indexOf(p) >= 0;
+        });
+    }
+    function getCheckedPerms() {
+        const out = [];
+        ['all', 'query', 'vendor', 'asset'].forEach(p => { const el = $('u-perm-' + p); if (el && el.checked) out.push(p); });
+        if (out.indexOf('all') >= 0) return ['all'];
+        return out;
+    }
+    function bindPermChecks() {
+        const ids = ['all', 'query', 'vendor', 'asset'];
+        ids.forEach(p => {
+            const el = $('u-perm-' + p);
+            if (!el) return;
+            el.addEventListener('change', () => {
+                if (p === 'all' && el.checked) {
+                    ids.filter(x => x !== 'all').forEach(x => { const o = $('u-perm-' + x); if (o) o.checked = false; });
+                } else if (p !== 'all' && el.checked) {
+                    const a = $('u-perm-all'); if (a) a.checked = false;
+                }
+                if (!getCheckedPerms().length) el.checked = true;   // 至少保留一項
+            });
+        });
+    }
+
     function startEditUser(id) {
-        if (!state.isAdmin) return;
+        if (!can('all')) return;
         const u = state.users.find(x => x.id === id);
         if (!u) return;
         state.editingUserId = u.id;
@@ -909,7 +969,7 @@
         $('u-display').value = u.display_name || '';
         $('u-password').value = '';
         $('u-password').placeholder = '留空＝不變更密碼';
-        $('u-role').value = u.role;
+        setUserPermChecks(u.perms && u.perms.length ? u.perms : (u.role === 'admin' ? ['all'] : ['query']));
         $('u-active').value = u.is_active ? '1' : '0';
         $('u-submit').textContent = '💾 儲存修改';
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -923,7 +983,7 @@
         $('u-display').value = '';
         $('u-password').value = '';
         $('u-password').placeholder = '至少 4 碼';
-        $('u-role').value = 'user';
+        setUserPermChecks(['query']);
         $('u-active').value = '1';
         $('u-submit').textContent = '➕ 新增帳號';
     }
@@ -933,16 +993,17 @@
         const username = $('u-username').value.trim();
         const displayName = $('u-display').value.trim();
         const password = $('u-password').value;
-        const role = $('u-role').value;
+        const perms = getCheckedPerms();
         const isActive = $('u-active').value === '1';
+        if (!perms.length) { toast('⚠️ 請至少勾選一種權限。', 'warn'); return; }
         try {
             if (state.editingUserId) {
-                await put('/api/users/' + state.editingUserId, { displayName: displayName, role: role, isActive: isActive });
+                await put('/api/users/' + state.editingUserId, { displayName: displayName, perms: perms, isActive: isActive });
                 if (password) await post('/api/users/' + state.editingUserId + '/password', { newPassword: password });
-                toast('✅ 帳號已更新。', 'ok');
+                toast('✅ 帳號已更新（權限即刻生效）。', 'ok');
             } else {
                 if (!password) { toast('⚠️ 新增帳號需設定密碼（至少 4 碼）。', 'warn'); return; }
-                await post('/api/users', { username: username, displayName: displayName, password: password, role: role, isActive: isActive });
+                await post('/api/users', { username: username, displayName: displayName, password: password, perms: perms, isActive: isActive });
                 toast('✅ 已新增帳號：' + username, 'ok');
             }
             clearUserForm();
@@ -956,15 +1017,6 @@
         if (pw === null) return;
         if (String(pw).length < 4) { toast('⚠️ 密碼長度至少 4 碼。', 'warn'); return; }
         try { await post('/api/users/' + id + '/password', { newPassword: pw }); toast('🔑 已重設密碼。', 'ok'); }
-        catch (err) { toast('❌ ' + err.message, 'err'); }
-    }
-
-    async function toggleRole(id) {
-        const u = state.users.find(x => x.id === id);
-        if (!u) return;
-        const next = u.role === 'admin' ? 'user' : 'admin';
-        if (!confirmBox('🔁 將「' + u.username + '」改為「' + (next === 'admin' ? '管理者' : '一般使用者') + '」？')) return;
-        try { await put('/api/users/' + id, { role: next }); toast('✅ 角色已更新。', 'ok'); await loadUsers(); }
         catch (err) { toast('❌ ' + err.message, 'err'); }
     }
 
@@ -1237,7 +1289,7 @@
         return '<div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">' + list.map(p => {
             const name = '📄 ' + esc(fileBaseName(p));
             const title = ' title="' + esc(fileBaseName(p)) + '"';
-            return state.isAdmin
+            return can('vendor')
                 ? '<a class="file-chip" href="/api/files?path=' + encodeURIComponent(p) + '" target="_blank" rel="noopener"' + title + '>' + name + '</a>'
                 : '<span class="file-chip plain"' + title + '>' + name + '</span>';
         }).join('') + '</div>';
@@ -1320,7 +1372,7 @@
             return;
         }
         box.innerHTML = docs.map((p, i) => '<div class="mini-item" style="display:flex;justify-content:space-between;gap:10px;align-items:center;">'
-            + (state.isAdmin
+            + (can('vendor')
                 ? '<a class="file-chip" href="/api/files?path=' + encodeURIComponent(p) + '" target="_blank" rel="noopener" title="' + esc(fileBaseName(p)) + '">📄 ' + (i + 1) + '. ' + esc(fileBaseName(p)) + '</a>'
                 : '<span class="file-chip plain">📄 ' + (i + 1) + '. ' + esc(fileBaseName(p)) + '</span>')
             + '<button type="button" class="btn btn-danger btn-sm" data-del-maint-doc="' + esc(p) + '" style="white-space:nowrap;">🗑️</button></div>').join('');
@@ -1684,6 +1736,7 @@
         $('form-field-cat').addEventListener('submit', (e) => { e.preventDefault(); addField('category'); });
         $('form-field-dep').addEventListener('submit', (e) => { e.preventDefault(); addField('department'); });
         $('form-user').addEventListener('submit', submitUserForm);
+        bindPermChecks();
         $('u-cancel').addEventListener('click', clearUserForm);
         $('form-my-password').addEventListener('submit', submitMyPassword);
 

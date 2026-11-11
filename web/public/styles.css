@@ -53,6 +53,7 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 11
 /* 表格欄位較少者不需要 1180px 最小寬度，避免小視窗出現水平捲軸把「操作」欄切掉 */
 #vendors-table { min-width: 900px; }
 #maint-table { min-width: 1040px; }
+#users-table { min-width: 960px; }
 /* 欄位管理（兩欄版面內的小表格）：不要套用全域最小寬度，避免代號／操作被推出畫面 */
 #fields-cat-table, #fields-dep-table { min-width: 0; table-layout: fixed; }
 #fields-cat-table td:first-child, #fields-dep-table td:first-child { word-break: break-word; }
@@ -156,6 +157,15 @@ tbody tr:hover { background: #f8fafc; }
 .role-pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: bold; }
 .role-admin { background: #fef3c7; color: #b45309; }
 .role-user { background: #dbeafe; color: #1d4ed8; }
+.role-vendor { background: #ede9fe; color: #6d28d9; }
+.role-asset { background: #dcfce7; color: #15803d; }
+
+/* 權限勾選框（帳號管理） */
+.perm-box { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 6px 16px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.perm-item { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; color: #334155; cursor: pointer; padding: 2px; }
+.perm-item input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.perm-item b { white-space: nowrap; }
+.perm-desc { flex-basis: 100%; padding-left: 24px; font-size: 11.5px; color: var(--muted); }
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .panel { background: #f8fafc; border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
 .inline-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }

@@ -43,20 +43,45 @@ async function init(sessionStore) {
 
 async function reload() { return init(store); }
 
+const PERM_CODES = ['all', 'query', 'vendor', 'asset'];
+function normalizeSessionPerms(input, role) {
+    let list = Array.isArray(input) ? input.slice() : String(input == null ? '' : input).split(',');
+    list = list.map(s => String(s || '').trim().toLowerCase()).filter(s => PERM_CODES.indexOf(s) >= 0);
+    if (list.indexOf('all') >= 0) return ['all'];
+    const out = PERM_CODES.filter(c => c !== 'all' && list.indexOf(c) >= 0);
+    if (out.length) return out;
+    return role === 'admin' ? ['all'] : ['query'];
+}
+
 function createSession(user) {
     const sid = crypto.randomBytes(32).toString('hex');
+    const perms = normalizeSessionPerms(user.perms, user.role);
     const session = {
         sid: sid,
         id: user.id,
         username: user.username,
         displayName: user.display_name || user.username,
-        role: (user.role === 'admin') ? 'admin' : 'user',
+        role: perms.indexOf('all') >= 0 ? 'admin' : 'user',
+        perms: perms,
         createdAt: Date.now(),
         expires: Date.now() + SESSION_TTL_MS
     };
     sessions.set(sid, session);
     if (store) { try { store.insert(session).catch(() => {}); } catch (e) {} }
     return session;
+}
+
+// 權限調整後同步既有 Session（不必強制重新登入）
+function updateUserSessions(userId, patch) {
+    const id = parseInt(userId, 10) || 0;
+    if (!id || !patch) return 0;
+    const target = Array.from(sessions.values()).filter(s => s.id === id);
+    target.forEach(s => {
+        if (patch.perms) s.perms = normalizeSessionPerms(patch.perms, patch.role);
+        s.role = (s.perms && s.perms.indexOf('all') >= 0) ? 'admin' : 'user';
+        if (store) { try { store.insert(s).catch(() => {}); } catch (e) {} }
+    });
+    return target.length;
 }
 
 function parseCookies(req) {
@@ -125,7 +150,7 @@ function remainingBlockSeconds(ip) {
 
 module.exports = {
     SESSION_TTL_MS, COOKIE_NAME,
-    init, reload, verifyPassword, createSession, getSession, destroySession, invalidateUser,
+    init, reload, verifyPassword, createSession, getSession, destroySession, invalidateUser, updateUserSessions,
     cookieHeader, clearCookieHeader, parseCookies,
     isBlocked, recordFailure, clearFailures, remainingBlockSeconds
 };
