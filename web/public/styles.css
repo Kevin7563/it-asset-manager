@@ -53,6 +53,11 @@ table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 11
 /* 表格欄位較少者不需要 1180px 最小寬度，避免小視窗出現水平捲軸把「操作」欄切掉 */
 #vendors-table { min-width: 900px; }
 #maint-table { min-width: 1040px; }
+/* 欄位管理（兩欄版面內的小表格）：不要套用全域最小寬度，避免代號／操作被推出畫面 */
+#fields-cat-table, #fields-dep-table { min-width: 0; table-layout: fixed; }
+#fields-cat-table td:first-child, #fields-dep-table td:first-child { word-break: break-word; }
+#fields-cat-table td, #fields-dep-table td { padding: 8px 10px; }
+#fields-cat-table th, #fields-dep-table th { padding: 8px 10px; }
 .sort-link { color: var(--accent); text-decoration: none; font-weight: bold; }
 .sort-link:hover { text-decoration: underline; }
 
