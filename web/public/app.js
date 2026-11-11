@@ -1,5 +1,5 @@
 // =====================================================================
-// Web 版前端（Phase 1：唯讀查詢 + 匯出）
+// Web 版前端：分頁導覽 + 各模組 CRUD（管理者）／查詢（一般使用者）
 // =====================================================================
 (function () {
     'use strict';
@@ -19,11 +19,23 @@
         repair: { text: '維修中', cls: 'badge-repair' },
         scrapped: { text: '已報廢', cls: 'badge-scrapped' }
     };
+    const PAGE_TITLES = {
+        dashboard: '📊 總覽看板', 'asset-new': '➕ 新增資訊資產', repairs: '🔧 資訊資產維修',
+        transfers: '🔄 資訊資產轉移', recycle: '🗑️ 資源回收桶', vendors: '🏢 廠商與維護紀錄',
+        fields: '🧩 欄位管理', users: '👥 帳號管理', tools: '📥 匯入／備份', password: '🔒 修改我的密碼'
+    };
 
-    const state = { user: null, assets: [], categories: {}, departments: {}, keyword: '' };
+    const state = {
+        user: null, isAdmin: false,
+        assets: [], vendors: [], repairs: [], transfers: [], maint: [], recycle: [], users: [],
+        catOpts: [], depOpts: [], categories: {}, departments: {},
+        keyword: '', page: 'dashboard', editingAssetId: 0, editingUserId: 0
+    };
+
     const $ = (id) => document.getElementById(id);
     const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    const orDash = (v) => (v != null && String(v).trim() !== '') ? esc(v) : '<span class="muted">—</span>';
+    const dash = (v) => (v != null && String(v).trim() !== '') ? esc(v) : '<span class="muted">—</span>';
+    const money = (n) => (Number(n) || 0).toLocaleString();
 
     function toast(msg, type) {
         const box = $('toast-box');
@@ -32,7 +44,7 @@
         el.className = 'toast toast-' + (type || 'info');
         el.textContent = String(msg);
         box.appendChild(el);
-        setTimeout(() => { el.style.transition = 'opacity .3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, 4000);
+        setTimeout(() => { el.style.transition = 'opacity .3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 320); }, 4200);
     }
 
     async function api(path, options) {
@@ -44,11 +56,14 @@
         if (!res.ok) {
             const err = new Error((data && data.message) || ('HTTP ' + res.status));
             err.status = res.status;
-            err.data = data;
             throw err;
         }
         return data;
     }
+    const post = (p, b) => api(p, { method: 'POST', body: JSON.stringify(b || {}) });
+    const put = (p, b) => api(p, { method: 'PUT', body: JSON.stringify(b || {}) });
+    const del = (p) => api(p, { method: 'DELETE' });
+    const confirmBox = (msg) => window.confirm(msg);
 
     // ── 登入 / 登出 ─────────────────────────────────────
     function showLogin() {
@@ -60,10 +75,11 @@
 
     function showApp(user) {
         state.user = user;
+        state.isAdmin = user.role === 'admin';
         $('login-view').classList.add('hidden');
         $('app-view').classList.remove('hidden');
-        $('user-chip').textContent = (user.role === 'admin' ? '👑 ' : '👤 ') + (user.displayName || user.username);
-        loadAll();
+        applyRoleUI();
+        showPage('dashboard');
     }
 
     async function doLogin(e) {
@@ -73,18 +89,13 @@
         const errBox = $('login-error');
         const btn = $('login-btn');
         errBox.classList.add('hidden');
-        if (!username || !password) {
-            errBox.textContent = '請輸入帳號與密碼。';
-            errBox.classList.remove('hidden');
-            return;
-        }
+        if (!username || !password) { errBox.textContent = '請輸入帳號與密碼。'; errBox.classList.remove('hidden'); return; }
         btn.disabled = true; btn.textContent = '登入中...';
         try {
-            const res = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: username, password: password }) });
+            const res = await post('/api/login', { username: username, password: password });
+            await loadFieldOptions();
             showApp(res.user);
             toast('👋 歡迎回來，' + (res.user.displayName || res.user.username), 'ok');
-            $('search').value = '';
-            state.keyword = '';
         } catch (err) {
             errBox.textContent = err.message || '登入失敗。';
             errBox.classList.remove('hidden');
@@ -94,156 +105,298 @@
     }
 
     async function doLogout() {
-        try { await api('/api/logout', { method: 'POST' }); } catch (e) {}
-        state.user = null;
-        state.assets = [];
-        $('asset-table').querySelector('tbody').innerHTML = '';
+        try { await post('/api/logout'); } catch (e) {}
+        state.user = null; state.isAdmin = false;
+        state.assets = []; state.users = [];
+        document.querySelectorAll('table tbody').forEach(tb => { tb.innerHTML = ''; });
+        ['detail-modal', 'edit-modal'].forEach(id => { const m = $(id); if (m) m.classList.add('hidden'); });
         toast('👋 您已登出系統。', 'ok');
         showLogin();
     }
 
-    // ── 資料載入 ───────────────────────────────────────
-    async function loadFieldOptions() {
-        try {
-            const res = await api('/api/field-options');
-            state.categories = {};
-            state.departments = {};
-            (res.categories || []).forEach(o => { state.categories[o.value] = o.label + ' (' + o.code + ')'; });
-            (res.departments || []).forEach(o => { state.departments[o.code] = o.label; });
-        } catch (e) { /* 使用預設對照表 */ }
+    // ── 導覽 / 權限 ─────────────────────────────────────
+    function applyRoleUI() {
+        document.querySelectorAll('[data-admin]').forEach(el => el.classList.toggle('hidden', !state.isAdmin));
+        const label = state.user ? ((state.user.role === 'admin' ? '👑 ' : '👤 ') + (state.user.displayName || state.user.username)) : '—';
+        const chip = $('user-chip'); if (chip) chip.textContent = label;
+        const side = $('side-user'); if (side) side.textContent = label;
     }
 
+    async function showPage(name) {
+        if (!PAGE_TITLES[name]) name = 'dashboard';
+        const adminPages = ['asset-new', 'repairs', 'transfers', 'recycle', 'vendors', 'fields', 'users', 'tools'];
+        if (!state.isAdmin && adminPages.indexOf(name) >= 0) {
+            toast('⛔ 權限不足：此功能僅限管理者使用。', 'warn');
+            return;
+        }
+        state.page = name;
+        document.querySelectorAll('.page').forEach(el => el.classList.add('hidden'));
+        const target = $('page-' + name);
+        if (target) target.classList.remove('hidden');
+        document.querySelectorAll('#side-nav .nav-item').forEach(el => el.classList.toggle('active', el.getAttribute('data-page') === name));
+        const title = $('page-title'); if (title) title.textContent = PAGE_TITLES[name] || '';
+        try { await refreshPage(name); } catch (e) { toast('載入失敗：' + e.message, 'err'); }
+    }
+
+    async function refreshPage(name) {
+        if (name === 'dashboard') { await Promise.all([loadStats(), loadAssets()]); }
+        if (name === 'asset-new') { await loadVendors(); }
+        if (name === 'repairs') { await Promise.all([loadAssets(), loadRepairs()]); }
+        if (name === 'transfers') { await Promise.all([loadAssets(), loadTransfers()]); }
+        if (name === 'recycle') { await loadRecycle(); }
+        if (name === 'vendors') { await Promise.all([loadVendors(), loadMaint()]); }
+        if (name === 'fields') { await loadFieldOptions(); renderFields(); }
+        if (name === 'users') { await loadUsers(); }
+    }
+
+    // ── 對照表 / 選單 ───────────────────────────────────
     const catText = (v) => state.categories[v] || FALLBACK_CAT[v] || String(v || '—');
     const deptText = (code) => {
         const c = String(code || 'IT').toUpperCase();
         return state.departments[c] ? c + ' ' + state.departments[c] : (FALLBACK_DEPT[c] ? c + ' ' + FALLBACK_DEPT[c] : c);
     };
+    const statusBadge = (code) => {
+        const st = STATUS[code] || { text: code || '—', cls: '' };
+        return '<span class="badge ' + st.cls + '">' + esc(st.text) + '</span>';
+    };
 
-    async function loadAssets() {
+    async function loadFieldOptions() {
         try {
-            const res = await api('/api/assets');
-            state.assets = res.assets || [];
-            renderTable();
-        } catch (err) {
-            if (err.status === 401) { showLogin(); return; }
-            toast('❌ 載入資產失敗：' + err.message, 'err');
-        }
+            const res = await api('/api/field-options');
+            state.catOpts = res.categories || [];
+            state.depOpts = res.departments || [];
+            state.categories = {};
+            state.departments = {};
+            state.catOpts.forEach(o => { state.categories[o.value] = o.label + ' (' + o.code + ')'; });
+            state.depOpts.forEach(o => { state.departments[o.code] = o.label; });
+            fillFieldSelects();
+        } catch (e) { /* 使用預設對照 */ }
     }
 
-    async function loadAll() {
-        await loadFieldOptions();
-        await loadAssets();
+    function fillFieldSelects() {
+        const catSel = $('a-category');
+        if (catSel) catSel.innerHTML = '<option value="">-- 請選擇 --</option>' + state.catOpts.map(o => `<option value="${esc(o.value)}">${esc(o.label)} (${esc(o.code)})</option>`).join('');
+        const depOptions = state.depOpts.map(o => `<option value="${esc(o.code)}">${esc(o.label)} (${esc(o.code)})</option>`).join('');
+        const aDep = $('a-department');
+        if (aDep) aDep.innerHTML = depOptions;
+        const tDep = $('t-to-dept');
+        if (tDep) tDep.innerHTML = '<option value="">-- 請選擇新部門 --</option>' + depOptions;
     }
 
-    // ── 表格渲染 / 搜尋 ─────────────────────────────────
-    function matches(a, kw) {
+    function fillVendorSelects() {
+        const opts = state.vendors.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
+        const aV = $('a-vendor'); if (aV) aV.innerHTML = '<option value="0">其他 (預設)</option>' + opts;
+        const eV = $('e-vendor'); if (eV) eV.innerHTML = '<option value="0">其他 (預設)</option>' + opts;
+        const mV = $('m-vendor'); if (mV) mV.innerHTML = '<option value="">-- 請選擇廠商 --</option>' + state.vendors.map(v => `<option value="${esc(v.name)}">${esc(v.name)}</option>`).join('');
+    }
+
+    function fillAssetSelects() {
+        const html = '<option value="">-- 請選擇資產 --</option>' + state.assets.map(a =>
+            `<option value="${a.id}">[${esc(a.asset_no)}] ${esc(a.name)}（${esc(deptText(a.department))}）</option>`).join('');
+        ['r-asset', 't-asset'].forEach(id => { const el = $(id); if (el) el.innerHTML = html; });
+    }
+
+    // ── 資料載入 ───────────────────────────────────────
+    async function loadAssets() {
+        const res = await api('/api/assets');
+        state.assets = res.assets || [];
+        fillAssetSelects();
+        renderAssetTable();
+    }
+
+    async function loadStats() {
+        const s = await api('/api/stats');
+        const cnt = (k) => { const f = (s.byStatus || []).find(x => x.status === k); return f ? f.c : 0; };
+        const cards = [
+            { label: '資產總數', value: s.total, cls: 'stat-blue' },
+            { label: '使用中', value: cnt('active'), cls: 'stat-green' },
+            { label: '庫存備用', value: cnt('inventory'), cls: 'stat-cyan' },
+            { label: '維修中', value: cnt('repair'), cls: 'stat-orange' },
+            { label: '已報廢', value: cnt('scrapped'), cls: 'stat-red' },
+            { label: '待處理維修', value: s.pendingRepairs, cls: 'stat-orange' },
+            { label: '廠商數', value: s.vendors, cls: 'stat-blue' },
+            { label: '回收桶', value: s.recycle, cls: 'stat-gray' }
+        ];
+        const box = $('stat-cards');
+        if (box) box.innerHTML = cards.map(c => `<div class="stat-card ${c.cls}"><div class="stat-value">${c.value}</div><div class="stat-label">${c.label}</div></div>`).join('');
+    }
+
+    async function loadVendors() {
+        const res = await api('/api/vendors');
+        state.vendors = res.vendors || [];
+        fillVendorSelects();
+        renderVendors();
+    }
+
+    async function loadRepairs() {
+        const res = await api('/api/repairs');
+        state.repairs = res.repairs || [];
+        renderRepairs();
+    }
+
+    async function loadTransfers() {
+        const res = await api('/api/transfers');
+        state.transfers = res.transfers || [];
+        renderTransfers();
+    }
+
+    async function loadMaint() {
+        const res = await api('/api/vendor-maint');
+        state.maint = res.records || [];
+        renderMaint();
+    }
+
+    async function loadRecycle() {
+        const res = await api('/api/recycle');
+        state.recycle = res.assets || [];
+        renderRecycle();
+    }
+
+    async function loadUsers() {
+        const res = await api('/api/users');
+        state.users = res.users || [];
+        renderUsers();
+    }
+
+    // ── 總覽表格 ───────────────────────────────────────
+    function assetMatches(a, kw) {
         if (!kw) return true;
-        const hay = [
-            a.asset_no, a.name, a.custodian, a.location, a.sn, a.spec_note, a.notes, a.vendor_name,
-            deptText(a.department), catText(a.category)
-        ].join(' ').toLowerCase();
+        const hay = [a.asset_no, a.name, a.custodian, a.location, a.sn, a.spec_note, a.notes, a.vendor_name,
+            deptText(a.department), catText(a.category)].join(' ').toLowerCase();
         return hay.indexOf(kw) >= 0;
     }
 
-    function renderTable() {
+    function renderAssetTable() {
         const tbody = document.querySelector('#asset-table tbody');
+        if (!tbody) return;
         const kw = state.keyword.trim().toLowerCase();
-        const list = state.assets.filter(a => matches(a, kw));
+        const list = state.assets.filter(a => assetMatches(a, kw));
         tbody.innerHTML = '';
         const label = $('count-label');
         if (label) label.textContent = kw ? ('符合 ' + list.length + ' / ' + state.assets.length + ' 筆') : ('共 ' + state.assets.length + ' 筆');
-        $('empty-state').classList.toggle('hidden', list.length > 0);
-
+        const empty = $('empty-state'); if (empty) empty.classList.toggle('hidden', list.length > 0);
         list.forEach(item => {
-            const st = STATUS[item.status] || { text: item.status || '—', cls: '' };
             let notesHtml = item.notes ? esc(item.notes) : '<span class="muted">—</span>';
-            if (item.status === 'scrapped' && item.scrap_reason) {
-                notesHtml += '<div style="color:#b91c1c;font-size:12px;margin-top:4px;">🚨 報廢原因：' + esc(item.scrap_reason) + '</div>';
-            }
+            if (item.status === 'scrapped' && item.scrap_reason) notesHtml += '<div style="color:#b91c1c;font-size:12px;margin-top:4px;">🚨 ' + esc(item.scrap_reason) + '</div>';
             const tr = document.createElement('tr');
             tr.innerHTML =
                 '<td><span class="asset-no">' + esc(item.asset_no) + '</span></td>'
                 + '<td><span class="dept">' + esc(deptText(item.department)) + '</span></td>'
                 + '<td><a href="#" class="name-link">' + esc(item.name || '') + '</a></td>'
                 + '<td>' + esc(catText(item.category)) + '</td>'
-                + '<td>' + orDash(item.custodian) + '</td>'
+                + '<td>' + dash(item.custodian) + '</td>'
                 + '<td>' + (item.vendor_name ? '🏢 ' + esc(item.vendor_name) : '<span class="muted">其他 (預設)</span>') + '</td>'
-                + '<td style="text-align:center;"><span class="badge ' + st.cls + '">' + esc(st.text) + '</span></td>'
+                + '<td style="text-align:center;">' + statusBadge(item.status) + '</td>'
                 + '<td>' + (item.location ? '📍 ' + esc(item.location) : '<span class="muted">未標註</span>') + '</td>'
-                + '<td style="font-size:12.5px;">' + orDash(item.spec_note) + '</td>'
+                + '<td style="font-size:12.5px;">' + dash(item.spec_note) + '</td>'
                 + '<td style="font-size:12.5px;">' + notesHtml + '</td>';
-            tr.querySelector('.name-link').addEventListener('click', (e) => {
-                e.preventDefault();
-                openDetail(item.id);
-            });
+            tr.querySelector('.name-link').addEventListener('click', (e) => { e.preventDefault(); openDetail(item.id); });
             tbody.appendChild(tr);
         });
     }
 
-    // ── 資產履歷 ───────────────────────────────────────
-    function closeDetail() {
-        $('detail-modal').classList.add('hidden');
-    }
-
-    function statusBadge(code) {
-        const st = STATUS[code] || { text: code || '—', cls: '' };
-        return '<span class="badge ' + st.cls + '">' + esc(st.text) + '</span>';
-    }
+    function closeDetail() { $('detail-modal').classList.add('hidden'); }
+    function closeEdit() { $('edit-modal').classList.add('hidden'); }
 
     async function openDetail(id) {
         try {
             const res = await api('/api/assets/' + id);
             const a = res.asset || {};
+            state.editingAssetId = a.id;
             $('modal-title').textContent = '📋 資產維運履歷 ｜ ' + (a.asset_no || '');
             $('modal-info').innerHTML =
-                '<div><b>📦 設備名稱：</b>' + orDash(a.name) + '</div>'
+                '<div><b>📦 設備名稱：</b>' + dash(a.name) + '</div>'
                 + '<div><b>🏷️ 資產大類：</b>' + esc(catText(a.category)) + '</div>'
                 + '<div><b>🏢 所屬部門：</b><span class="dept">' + esc(deptText(a.department)) + '</span></div>'
-                + '<div><b>👤 保管窗口：</b>' + orDash(a.custodian) + '</div>'
+                + '<div><b>👤 保管窗口：</b>' + dash(a.custodian) + '</div>'
                 + '<div><b>🏢 購買廠商：</b>' + (a.vendor_name ? esc(a.vendor_name) : '<span class="muted">其他 (預設)</span>') + '</div>'
-                + '<div><b>🔢 原廠序列號：</b>' + orDash(a.sn) + '</div>'
+                + '<div><b>🔢 原廠序列號：</b>' + dash(a.sn) + '</div>'
                 + '<div><b>📊 當前狀態：</b>' + statusBadge(a.status) + '</div>'
-                + '<div><b>📅 購置日期：</b>' + orDash(a.purchase_date) + '</div>'
-                + '<div><b>🛡️ 保固到期：</b>' + orDash(a.warranty_date) + '</div>'
-                + '<div><b>📍 實體擺放地點：</b>' + orDash(a.location) + '</div>'
+                + '<div><b>📅 購置日期：</b>' + dash(a.purchase_date) + '</div>'
+                + '<div><b>🛡️ 保固到期：</b>' + dash(a.warranty_date) + '</div>'
+                + '<div><b>📍 實體擺放地點：</b>' + dash(a.location) + '</div>'
                 + (a.spec_note ? '<div class="full"><b>🧾 資產規格/備註：</b>' + esc(a.spec_note) + '</div>' : '')
                 + (a.notes ? '<div class="full"><b>📝 維運備註：</b>' + esc(a.notes) + '</div>' : '')
                 + ((a.status === 'scrapped' && a.scrap_reason) ? '<div class="full" style="color:#b91c1c;"><b>🚨 報廢原因：</b>' + esc(a.scrap_reason) + '</div>' : '');
 
             const rep = res.repairs || [];
-            $('modal-repairs').innerHTML = rep.length === 0
-                ? '<div class="mini-empty">本資產尚無維修紀錄。</div>'
-                : rep.map(r => {
+            $('modal-repairs').innerHTML = rep.length === 0 ? '<div class="mini-empty">本資產尚無維修紀錄。</div>' :
+                rep.map(r => {
                     const stText = r.status === 'completed' ? '✅ 已完工' : (r.status === 'scrapped' ? '🚨 因報廢結案' : '🟡 維修中');
-                    const cost = (r.cost && Number(r.cost) > 0) ? ('　｜　💰 ' + Number(r.cost).toLocaleString() + ' 元') : '';
-                    return '<div class="mini-item"><div class="row1"><span>' + esc(r.fault_description || '(未填寫故障描述)') + '</span><span>' + stText + '</span></div>'
-                        + '<div class="sub">🔧 ' + esc(r.repair_vendor || '未指定') + cost + '</div>'
-                        + '<div class="sub">📅 送修 ' + esc(r.reported_date || '—') + '　｜　完工 ' + esc(r.completed_date || '—') + '</div>'
+                    const cost = (r.cost && Number(r.cost) > 0) ? ('　｜　💰 ' + money(r.cost) + ' 元') : '';
+                    return '<div class="mini-item"><div class="row1"><span>' + esc(r.fault_description || '(未填寫)') + '</span><span>' + stText + '</span></div>'
+                        + '<div class="sub">🔧 ' + esc(r.repair_vendor || '未指定') + cost + '　｜　📅 送修 ' + esc(r.reported_date || '—') + '　完工 ' + esc(r.completed_date || '—') + '</div>'
                         + (r.notes ? '<div class="sub">📝 ' + esc(r.notes) + '</div>' : '') + '</div>';
                 }).join('');
 
             const trs = res.transfers || [];
-            $('modal-transfers').innerHTML = trs.length === 0
-                ? '<div class="mini-empty">本資產尚無轉移紀錄。</div>'
-                : trs.map(t => {
+            $('modal-transfers').innerHTML = trs.length === 0 ? '<div class="mini-empty">本資產尚無轉移紀錄。</div>' :
+                trs.map(t => {
                     const reason = [t.reason, t.notes].filter(x => x && String(x).trim()).join('　');
                     return '<div class="mini-item"><div class="row1"><span>🏢 ' + esc(deptText(t.from_department)) + ' → ' + esc(deptText(t.to_department)) + '</span><span>📅 ' + esc(t.transfer_date || '—') + '</span></div>'
                         + '<div class="sub">👤 ' + esc(t.from_custodian || '—') + ' → ' + esc(t.to_custodian || '—') + '　｜　📍 ' + esc(t.from_location || '—') + ' → ' + esc(t.to_location || '—') + '</div>'
                         + (reason ? '<div class="sub">📝 ' + esc(reason) + '</div>' : '') + '</div>';
                 }).join('');
 
+            const editBtn = $('modal-edit-btn');
+            if (editBtn) editBtn.style.display = state.isAdmin ? '' : 'none';
             $('detail-modal').classList.remove('hidden');
-        } catch (err) {
-            toast('❌ 載入履歷失敗：' + err.message, 'err');
-        }
+        } catch (err) { toast('❌ 載入履歷失敗：' + err.message, 'err'); }
+    }
+
+    function openEditFromDetail() {
+        const a = state.assets.find(x => x.id === state.editingAssetId);
+        if (!a) return;
+        closeDetail();
+        $('edit-title').textContent = '✏️ 編輯資產 ｜ ' + a.asset_no;
+        $('e-no').value = a.asset_no || '';
+        $('e-name').value = a.name || '';
+        $('e-sn').value = a.sn || '';
+        $('e-vendor').value = String(a.vendor_id || 0);
+        $('e-status').value = a.status || 'active';
+        $('e-scrap').value = a.scrap_reason || '';
+        $('e-purchase').value = (a.purchase_date || '').slice(0, 10);
+        $('e-warranty').value = (a.warranty_date || '').slice(0, 10);
+        $('e-spec').value = a.spec_note || '';
+        $('e-notes').value = a.notes || '';
+        $('edit-modal').classList.remove('hidden');
+    }
+
+    async function submitEditAsset(e) {
+        e.preventDefault();
+        const id = state.editingAssetId;
+        if (!id) return;
+        try {
+            await put('/api/assets/' + id, {
+                name: $('e-name').value.trim(), sn: $('e-sn').value.trim(),
+                vendor_id: parseInt($('e-vendor').value, 10) || 0,
+                status: $('e-status').value, scrap_reason: $('e-scrap').value.trim(),
+                purchase_date: $('e-purchase').value, warranty_date: $('e-warranty').value,
+                spec_note: $('e-spec').value.trim(), notes: $('e-notes').value.trim()
+            });
+            closeEdit();
+            toast('💾 資產已更新。', 'ok');
+            await loadAssets();
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    async function deleteCurrentAsset() {
+        const id = state.editingAssetId;
+        if (!id) return;
+        if (!confirmBox('🗑️ 確定要將此資產移至資源回收桶嗎？')) return;
+        try {
+            await del('/api/assets/' + id);
+            closeEdit();
+            toast('🗑️ 已移至資源回收桶。', 'ok');
+            await loadAssets();
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
     }
 
     // ── 匯出 Excel ─────────────────────────────────────
     async function doExport() {
         const btn = $('export-btn');
         const old = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = '⏳ 產生中...';
+        btn.disabled = true; btn.textContent = '⏳ 產生中...';
         try {
             const res = await fetch('/api/export/inventory.xlsx', { credentials: 'same-origin' });
             if (!res.ok) {
@@ -254,64 +407,641 @@
             const blob = await res.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
-            a.download = 'IT_資產盤點總表.xlsx';
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
+            a.href = url; a.download = 'IT_資產盤點總表.xlsx';
+            document.body.appendChild(a); a.click(); a.remove();
             setTimeout(() => URL.revokeObjectURL(url), 8000);
             toast('✅ 盤點總表已開始下載（含條碼貼紙欄）', 'ok');
         } catch (err) {
-            if (err && err.message === 'Failed to fetch') {
-                toast('❌ 匯出失敗：無法連線伺服器，請確認連線狀態。', 'err');
-            } else {
-                toast('❌ ' + err.message, 'err');
-            }
+            toast('❌ ' + (err.message || '匯出失敗'), 'err');
         } finally {
-            btn.disabled = false;
-            btn.textContent = old;
+            btn.disabled = false; btn.textContent = old;
         }
     }
 
-    // ── 事件綁定 ───────────────────────────────────────
+    // ── 維修 / 轉移列表 ────────────────────────────────
+    function renderRepairs() {
+        const tbody = document.querySelector('#repairs-table tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (!state.repairs.length) { tbody.innerHTML = '<tr><td colspan="8" class="empty">目前沒有維修紀錄。</td></tr>'; return; }
+        state.repairs.forEach(r => {
+            const stText = r.status === 'completed' ? '<span class="badge badge-active">已完工</span>'
+                : (r.status === 'scrapped' ? '<span class="badge badge-scrapped">因報廢結案</span>' : '<span class="badge badge-repair">維修中</span>');
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td><span class="asset-no">' + esc(r.asset_no) + '</span></td>'
+                + '<td><strong>' + esc(r.asset_name || '') + '</strong><div class="sub">' + esc(r.fault_description || '') + (r.notes ? '　📝 ' + esc(r.notes) : '') + '</div></td>'
+                + '<td>' + esc(r.repair_vendor || '未指定') + '</td>'
+                + '<td>' + esc(r.reported_date || '—') + '</td>'
+                + '<td>' + esc(r.completed_date || '—') + '</td>'
+                + '<td style="text-align:right;">' + (Number(r.cost) > 0 ? money(r.cost) : '—') + '</td>'
+                + '<td style="text-align:center;">' + stText + '</td>'
+                + '<td style="text-align:center;white-space:nowrap;">'
+                + (r.status === 'pending' ? '<button class="btn btn-success btn-sm" data-complete="' + r.id + '">✅ 完工</button> ' : '')
+                + '<button class="btn btn-danger btn-sm" data-del-repair="' + r.id + '">🗑️</button></td>';
+            tbody.appendChild(tr);
+        });
+        tbody.querySelectorAll('[data-complete]').forEach(btn => btn.addEventListener('click', () => completeRepair(Number(btn.getAttribute('data-complete')))));
+        tbody.querySelectorAll('[data-del-repair]').forEach(btn => btn.addEventListener('click', () => removeRepair(Number(btn.getAttribute('data-del-repair')))));
+    }
+
+    async function completeRepair(id) {
+        if (!confirmBox('✅ 確認此維修已完工？資產狀態會回復為「使用中」。')) return;
+        try { await post('/api/repairs/' + id + '/complete'); toast('✅ 已完工，資產回復使用中。', 'ok'); await Promise.all([loadRepairs(), loadAssets()]); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    async function removeRepair(id) {
+        if (!confirmBox('🗑️ 確定刪除此維修紀錄？')) return;
+        try { await del('/api/repairs/' + id); toast('🗑️ 已刪除維修紀錄。', 'ok'); await loadRepairs(); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    function renderTransfers() {
+        const tbody = document.querySelector('#transfers-table tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (!state.transfers.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty">目前沒有轉移紀錄。</td></tr>'; return; }
+        state.transfers.forEach(t => {
+            const tr = document.createElement('tr');
+            const reason = [t.reason, t.notes].filter(x => x && String(x).trim()).join('　');
+            tr.innerHTML = '<td><span class="asset-no">' + esc(t.asset_no) + '</span></td>'
+                + '<td>' + esc(t.asset_name || '') + '</td>'
+                + '<td>' + esc(deptText(t.from_department)) + ' → <strong>' + esc(deptText(t.to_department)) + '</strong></td>'
+                + '<td>' + esc(t.from_custodian || '—') + ' → <strong>' + esc(t.to_custodian || '—') + '</strong></td>'
+                + '<td>' + esc(t.transfer_date || '—') + '</td>'
+                + '<td class="sub">' + (reason ? esc(reason) : '—') + '</td>'
+                + '<td style="text-align:center;"><button class="btn btn-danger btn-sm" data-del-transfer="' + t.id + '">🗑️ 刪除</button></td>';
+            tbody.appendChild(tr);
+        });
+        tbody.querySelectorAll('[data-del-transfer]').forEach(btn => btn.addEventListener('click', () => removeTransfer(Number(btn.getAttribute('data-del-transfer')))));
+    }
+
+    async function removeTransfer(id) {
+        if (!confirmBox('🗑️ 確定刪除此轉移紀錄？（不會還原資產目前狀態）')) return;
+        try { await del('/api/transfers/' + id); toast('🗑️ 已刪除轉移紀錄。', 'ok'); await loadTransfers(); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    // ── 廠商 / 維護紀錄 / 回收桶 ───────────────────────
+    function renderVendors() {
+        const tbody = document.querySelector('#vendors-table tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (!state.vendors.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">目前沒有廠商資料。</td></tr>'; return; }
+        state.vendors.forEach(v => {
+            const nda = v.has_nda ? '<span class="badge badge-active">已簽署</span>' : '<span class="badge badge-scrapped">未簽署</span>';
+            const period = (v.maint_start || v.maint_end) ? (esc(v.maint_start || '—') + ' ~ ' + esc(v.maint_end || '—')) : '<span class="muted">未設定</span>';
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td><strong>' + esc(v.name) + '</strong>' + (v.address ? '<div class="sub">' + esc(v.address) + '</div>' : '') + '</td>'
+                + '<td>' + dash(v.representative) + '</td>'
+                + '<td>' + dash(v.phone) + '</td>'
+                + '<td style="text-align:center;">' + nda + '</td>'
+                + '<td style="font-size:12px;">' + period + '</td>'
+                + '<td style="text-align:center;white-space:nowrap;">'
+                + '<button class="btn btn-ghost btn-sm" data-edit-vendor="' + v.id + '">✏️ 編輯</button> '
+                + '<button class="btn btn-danger btn-sm" data-del-vendor="' + v.id + '">🗑️</button></td>';
+            tbody.appendChild(tr);
+        });
+        tbody.querySelectorAll('[data-edit-vendor]').forEach(btn => btn.addEventListener('click', () => startEditVendor(Number(btn.getAttribute('data-edit-vendor')))));
+        tbody.querySelectorAll('[data-del-vendor]').forEach(btn => btn.addEventListener('click', () => removeVendor(Number(btn.getAttribute('data-del-vendor')))));
+    }
+
+    function startEditVendor(id) {
+        const v = state.vendors.find(x => x.id === id);
+        if (!v) return;
+        $('v-id').value = v.id;
+        $('v-name').value = v.name || '';
+        $('v-rep').value = v.representative || '';
+        $('v-phone').value = v.phone || '';
+        $('v-address').value = v.address || '';
+        $('v-nda').value = String(v.has_nda ? 1 : 0);
+        $('v-items').value = v.service_items || '';
+        $('v-start').value = (v.maint_start || '').slice(0, 10);
+        $('v-end').value = (v.maint_end || '').slice(0, 10);
+        toast('✏️ 正在編輯：' + v.name, 'info');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function clearVendorForm() {
+        ['v-id', 'v-name', 'v-rep', 'v-phone', 'v-address', 'v-items', 'v-start', 'v-end'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+        const nda = $('v-nda'); if (nda) nda.value = '1';
+    }
+
+    async function removeVendor(id) {
+        if (!confirmBox('🗑️ 確定要刪除此廠商？\n（相關資產會改為「其他 (預設)」，維護紀錄一併刪除）')) return;
+        try { await del('/api/vendors/' + id); toast('🗑️ 已刪除廠商。', 'ok'); await Promise.all([loadVendors(), loadMaint()]); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    function renderMaint() {
+        const tbody = document.querySelector('#maint-table tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (!state.maint.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty">目前沒有維護紀錄。</td></tr>'; return; }
+        state.maint.forEach(r => {
+            const tr = document.createElement('tr');
+            const content = [r.content, r.notes].filter(x => x && String(x).trim()).join('　');
+            tr.innerHTML = '<td>' + esc(r.maint_date || '—') + '</td>'
+                + '<td>' + esc(r.vendor_name || '') + '</td>'
+                + '<td><strong>' + esc(r.equipment || '') + '</strong>' + (r.equipment_sn ? ' <span class="sub">(' + esc(r.equipment_sn) + ')</span>' : '')
+                + (content ? '<div class="sub">' + esc(content) + '</div>' : '') + '</td>'
+                + '<td>' + dash(r.maint_type) + '</td>'
+                + '<td style="text-align:right;">' + (Number(r.cost) > 0 ? money(r.cost) : '—') + '</td>'
+                + '<td style="text-align:center;">' + (r.signed ? '✅' : '—') + '</td>'
+                + '<td style="text-align:center;"><button class="btn btn-danger btn-sm" data-del-maint="' + r.id + '">🗑️</button></td>';
+            tbody.appendChild(tr);
+        });
+        tbody.querySelectorAll('[data-del-maint]').forEach(btn => btn.addEventListener('click', () => removeMaint(Number(btn.getAttribute('data-del-maint')))));
+    }
+
+    async function removeMaint(id) {
+        if (!confirmBox('🗑️ 確定刪除此維護紀錄？')) return;
+        try { await del('/api/vendor-maint/' + id); toast('🗑️ 已刪除維護紀錄。', 'ok'); await loadMaint(); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    function renderRecycle() {
+        const tbody = document.querySelector('#recycle-table tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        const empty = $('recycle-empty'); if (empty) empty.classList.toggle('hidden', state.recycle.length > 0);
+        if (!state.recycle.length) return;
+        state.recycle.forEach(a => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td><span class="asset-no">' + esc(a.asset_no) + '</span></td>'
+                + '<td>' + esc(a.name || '') + '</td>'
+                + '<td><span class="dept">' + esc(deptText(a.department)) + '</span></td>'
+                + '<td>' + esc(catText(a.category)) + '</td>'
+                + '<td>' + dash(a.custodian) + '</td>'
+                + '<td style="text-align:center;"><button class="btn btn-success btn-sm" data-restore="' + a.id + '">🔄 還原</button></td>';
+            tbody.appendChild(tr);
+        });
+        tbody.querySelectorAll('[data-restore]').forEach(btn => btn.addEventListener('click', () => restoreAsset(Number(btn.getAttribute('data-restore')))));
+    }
+
+    async function restoreAsset(id) {
+        if (!confirmBox('🔄 確定要將此資產還原到總覽？')) return;
+        try { await post('/api/assets/' + id + '/restore'); toast('🔄 已還原資產。', 'ok'); await loadRecycle(); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    // ── 欄位管理 ───────────────────────────────────────
+    function renderFields() {
+        const catBody = document.querySelector('#fields-cat-table tbody');
+        if (catBody) {
+            catBody.innerHTML = state.catOpts.length ? '' : '<tr><td colspan="3" class="empty">尚無選項。</td></tr>';
+            state.catOpts.forEach(o => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td>' + esc(o.label) + '</td><td>' + esc(o.code) + '</td>'
+                    + '<td style="text-align:center;"><button class="btn btn-danger btn-sm" data-del-field="' + o.id + '">🗑️</button></td>';
+                catBody.appendChild(tr);
+            });
+            catBody.querySelectorAll('[data-del-field]').forEach(btn => btn.addEventListener('click', () => removeField(Number(btn.getAttribute('data-del-field')))));
+        }
+        const depBody = document.querySelector('#fields-dep-table tbody');
+        if (depBody) {
+            depBody.innerHTML = state.depOpts.length ? '' : '<tr><td colspan="3" class="empty">尚無選項。</td></tr>';
+            state.depOpts.forEach(o => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td>' + esc(o.label) + '</td><td>' + esc(o.code) + '</td>'
+                    + '<td style="text-align:center;"><button class="btn btn-danger btn-sm" data-del-field="' + o.id + '">🗑️</button></td>';
+                depBody.appendChild(tr);
+            });
+            depBody.querySelectorAll('[data-del-field]').forEach(btn => btn.addEventListener('click', () => removeField(Number(btn.getAttribute('data-del-field')))));
+        }
+    }
+
+    async function addField(type) {
+        const label = $(type === 'category' ? 'fc-label' : 'fd-label').value.trim();
+        const code = $(type === 'category' ? 'fc-code' : 'fd-code').value.trim().toUpperCase();
+        if (!label || !code) { toast('⚠️ 請填寫名稱與代號。', 'warn'); return; }
+        try {
+            await post('/api/field-options', { type: type, label: label, code: code });
+            toast('✅ 已新增' + (type === 'category' ? '資產大類' : '部門') + '：' + label + '（' + code + '）', 'ok');
+            $(type === 'category' ? 'fc-label' : 'fd-label').value = '';
+            $(type === 'category' ? 'fc-code' : 'fd-code').value = '';
+            await loadFieldOptions();
+            renderFields();
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    async function removeField(id) {
+        if (!confirmBox('🗑️ 確定刪除此選項？（既有資產不受影響，但之後新增時無法再選用）')) return;
+        try { await del('/api/field-options/' + id); toast('🗑️ 已刪除選項。', 'ok'); await loadFieldOptions(); renderFields(); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    // ── 帳號管理 ───────────────────────────────────────
+    function renderUsers() {
+        const tbody = document.querySelector('#users-table tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        if (!state.users.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">尚無帳號。</td></tr>'; return; }
+        state.users.forEach(u => {
+            const self = state.user && u.id === state.user.id;
+            const roleBadge = u.role === 'admin' ? '<span class="role-pill role-admin">👑 管理者</span>' : '<span class="role-pill role-user">👤 一般</span>';
+            const activeBadge = u.is_active ? '<span class="badge badge-active">啟用</span>' : '<span class="badge badge-scrapped">停用</span>';
+            const tr = document.createElement('tr');
+            tr.innerHTML = '<td><strong>' + esc(u.username) + '</strong>' + (self ? '<div class="sub" style="color:#2563eb;">（目前登入）</div>' : '') + '</td>'
+                + '<td>' + esc(u.display_name || '') + '</td>'
+                + '<td style="text-align:center;">' + roleBadge + '</td>'
+                + '<td style="text-align:center;">' + activeBadge + '</td>'
+                + '<td style="font-size:12px;" class="sub">' + (u.last_login ? esc(String(u.last_login).slice(0, 19).replace('T', ' ')) : '—') + '</td>'
+                + '<td style="text-align:center;white-space:nowrap;">'
+                + '<button class="btn btn-ghost btn-sm" data-edit-user="' + u.id + '">✏️</button> '
+                + '<button class="btn btn-primary btn-sm" data-reset-pw="' + u.id + '">🔑</button> '
+                + '<button class="btn btn-ghost btn-sm" data-toggle-role="' + u.id + '">🔁</button> '
+                + '<button class="btn btn-sm" style="background:' + (u.is_active ? '#f59e0b' : '#10b981') + ';color:#fff;" data-toggle-active="' + u.id + '">' + (u.is_active ? '⛔' : '✅') + '</button> '
+                + '<button class="btn btn-danger btn-sm" data-del-user="' + u.id + '">🗑️</button></td>';
+            tbody.appendChild(tr);
+        });
+        tbody.querySelectorAll('[data-edit-user]').forEach(b => b.addEventListener('click', () => startEditUser(Number(b.getAttribute('data-edit-user')))));
+        tbody.querySelectorAll('[data-reset-pw]').forEach(b => b.addEventListener('click', () => resetUserPassword(Number(b.getAttribute('data-reset-pw')))));
+        tbody.querySelectorAll('[data-toggle-role]').forEach(b => b.addEventListener('click', () => toggleRole(Number(b.getAttribute('data-toggle-role')))));
+        tbody.querySelectorAll('[data-toggle-active]').forEach(b => b.addEventListener('click', () => toggleActive(Number(b.getAttribute('data-toggle-active')))));
+        tbody.querySelectorAll('[data-del-user]').forEach(b => b.addEventListener('click', () => removeUser(Number(b.getAttribute('data-del-user')))));
+    }
+
+    function startEditUser(id) {
+        if (!state.isAdmin) return;
+        const u = state.users.find(x => x.id === id);
+        if (!u) return;
+        state.editingUserId = u.id;
+        $('u-id').value = u.id;
+        $('u-username').value = u.username;
+        $('u-username').readOnly = true;
+        $('u-display').value = u.display_name || '';
+        $('u-password').value = '';
+        $('u-password').placeholder = '留空＝不變更密碼';
+        $('u-role').value = u.role;
+        $('u-active').value = u.is_active ? '1' : '0';
+        $('u-submit').textContent = '💾 儲存修改';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function clearUserForm() {
+        state.editingUserId = 0;
+        $('u-id').value = '';
+        $('u-username').value = '';
+        $('u-username').readOnly = false;
+        $('u-display').value = '';
+        $('u-password').value = '';
+        $('u-password').placeholder = '至少 4 碼';
+        $('u-role').value = 'user';
+        $('u-active').value = '1';
+        $('u-submit').textContent = '➕ 新增帳號';
+    }
+
+    async function submitUserForm(e) {
+        e.preventDefault();
+        const username = $('u-username').value.trim();
+        const displayName = $('u-display').value.trim();
+        const password = $('u-password').value;
+        const role = $('u-role').value;
+        const isActive = $('u-active').value === '1';
+        try {
+            if (state.editingUserId) {
+                await put('/api/users/' + state.editingUserId, { displayName: displayName, role: role, isActive: isActive });
+                if (password) await post('/api/users/' + state.editingUserId + '/password', { newPassword: password });
+                toast('✅ 帳號已更新。', 'ok');
+            } else {
+                if (!password) { toast('⚠️ 新增帳號需設定密碼（至少 4 碼）。', 'warn'); return; }
+                await post('/api/users', { username: username, displayName: displayName, password: password, role: role, isActive: isActive });
+                toast('✅ 已新增帳號：' + username, 'ok');
+            }
+            clearUserForm();
+            await loadUsers();
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    async function resetUserPassword(id) {
+        const u = state.users.find(x => x.id === id);
+        const pw = window.prompt('🔑 請輸入「' + (u ? u.username : '') + '」的新密碼（至少 4 碼）');
+        if (pw === null) return;
+        if (String(pw).length < 4) { toast('⚠️ 密碼長度至少 4 碼。', 'warn'); return; }
+        try { await post('/api/users/' + id + '/password', { newPassword: pw }); toast('🔑 已重設密碼。', 'ok'); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    async function toggleRole(id) {
+        const u = state.users.find(x => x.id === id);
+        if (!u) return;
+        const next = u.role === 'admin' ? 'user' : 'admin';
+        if (!confirmBox('🔁 將「' + u.username + '」改為「' + (next === 'admin' ? '管理者' : '一般使用者') + '」？')) return;
+        try { await put('/api/users/' + id, { role: next }); toast('✅ 角色已更新。', 'ok'); await loadUsers(); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    async function toggleActive(id) {
+        const u = state.users.find(x => x.id === id);
+        if (!u) return;
+        const next = !u.is_active;
+        if (!confirmBox((next ? '✅ 啟用' : '⛔ 停用') + '帳號「' + u.username + '」？')) return;
+        try { await put('/api/users/' + id, { isActive: next }); toast('✅ 狀態已更新。', 'ok'); await loadUsers(); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    async function removeUser(id) {
+        const u = state.users.find(x => x.id === id);
+        if (!u) return;
+        if (!confirmBox('🗑️ 確定刪除帳號「' + u.username + '」？此動作無法復原。')) return;
+        try { await del('/api/users/' + id); toast('🗑️ 已刪除帳號。', 'ok'); await loadUsers(); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    // ── 新增資產 ───────────────────────────────────────
+    async function submitAssetForm(e) {
+        e.preventDefault();
+        try {
+            const res = await post('/api/assets', {
+                category: $('a-category').value,
+                department: $('a-department').value || 'IT',
+                name: $('a-name').value.trim(),
+                sn: $('a-sn').value.trim(),
+                custodian: $('a-custodian').value.trim(),
+                location: $('a-location').value.trim(),
+                vendor_id: parseInt($('a-vendor').value, 10) || 0,
+                status: $('a-status').value,
+                purchase_date: $('a-purchase').value,
+                warranty_date: $('a-warranty').value,
+                spec_note: $('a-spec').value.trim(),
+                notes: $('a-notes').value.trim()
+            });
+            toast('💾 已新增資產：' + (res.asset_no || ''), 'ok');
+            ['a-name', 'a-sn', 'a-custodian', 'a-location', 'a-purchase', 'a-warranty', 'a-spec', 'a-notes'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+            await loadAssets();
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    // ── 維修 ───────────────────────────────────────────
+    async function submitRepairForm(e) {
+        e.preventDefault();
+        const assetId = parseInt($('r-asset').value, 10) || 0;
+        if (!assetId) { toast('⚠️ 請選擇要維修的資產。', 'warn'); return; }
+        try {
+            await post('/api/repairs', {
+                asset_id: assetId,
+                fault_description: $('r-fault').value.trim(),
+                repair_vendor: $('r-vendor').value.trim(),
+                reported_date: $('r-date').value,
+                cost: parseFloat($('r-cost').value) || 0,
+                notes: $('r-notes').value.trim()
+            });
+            toast('🔧 已登記維修，資產轉為「維修中」。', 'ok');
+            ['r-vendor', 'r-fault', 'r-date', 'r-cost', 'r-notes'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+            $('r-asset').value = '';
+            await Promise.all([loadRepairs(), loadAssets()]);
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    // ── 轉移 ───────────────────────────────────────────
+    function updateTransferHint() {
+        const id = parseInt($('t-asset').value, 10) || 0;
+        const a = state.assets.find(x => x.id === id);
+        const hint = $('t-hint');
+        const from = $('t-from');
+        if (!a) {
+            if (from) from.value = '';
+            if (hint) { hint.className = 'form-full tip-mini'; hint.textContent = 'ℹ️ 選擇不同部門時，資產編號會依「類別-新部門-日期-流水號」重新產生。'; }
+            return;
+        }
+        if (from) from.value = deptText(a.department) + ' / ' + (a.custodian || '—') + ' / ' + (a.location || '—');
+        const toDept = $('t-to-dept').value;
+        if (hint) {
+            if (toDept && toDept !== String(a.department || 'IT').toUpperCase()) {
+                hint.className = 'form-full tip-mini warn';
+                hint.textContent = '⚠️ 部門變更：儲存後會自動重新編號（原編號 ' + a.asset_no + '）。';
+            } else {
+                hint.className = 'form-full tip-mini';
+                hint.textContent = 'ℹ️ 同部門轉移：僅更新保管人／位置，資產編號不變。';
+            }
+        }
+    }
+
+    async function submitTransferForm(e) {
+        e.preventDefault();
+        const assetId = parseInt($('t-asset').value, 10) || 0;
+        if (!assetId) { toast('⚠️ 請選擇要轉移的資產。', 'warn'); return; }
+        try {
+            const res = await post('/api/transfers', {
+                asset_id: assetId,
+                to_department: $('t-to-dept').value,
+                to_custodian: $('t-custodian').value.trim(),
+                to_location: $('t-location').value.trim(),
+                transfer_date: $('t-date').value,
+                reason: $('t-reason').value.trim(),
+                notes: $('t-notes').value.trim()
+            });
+            toast(res.renumbered ? ('🔄 轉移完成，已重新編號為 ' + res.asset_no) : '🔄 轉移完成（編號不變）', 'ok');
+            ['t-custodian', 't-location', 't-date', 't-reason', 't-notes'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+            $('t-asset').value = ''; $('t-to-dept').value = '';
+            updateTransferHint();
+            await Promise.all([loadTransfers(), loadAssets()]);
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    // ── 廠商 / 維護紀錄 ────────────────────────────────
+    async function submitVendorForm(e) {
+        e.preventDefault();
+        const id = parseInt($('v-id').value, 10) || 0;
+        const payload = {
+            name: $('v-name').value.trim(),
+            representative: $('v-rep').value.trim(),
+            phone: $('v-phone').value.trim(),
+            address: $('v-address').value.trim(),
+            has_nda: $('v-nda').value === '1',
+            service_items: $('v-items').value.trim(),
+            maint_start: $('v-start').value,
+            maint_end: $('v-end').value
+        };
+        try {
+            if (id) {
+                await put('/api/vendors/' + id, payload);
+                toast('💾 廠商資料已更新：' + payload.name, 'ok');
+            } else {
+                await post('/api/vendors', payload);
+                toast('✅ 已新增廠商：' + payload.name, 'ok');
+            }
+            clearVendorForm();
+            await loadVendors();
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    async function submitMaintForm(e) {
+        e.preventDefault();
+        try {
+            await post('/api/vendor-maint', {
+                vendor_name: $('m-vendor').value,
+                maint_date: $('m-date').value,
+                equipment: $('m-equipment').value.trim(),
+                equipment_sn: $('m-sn').value.trim(),
+                maint_type: $('m-type').value.trim(),
+                handler: $('m-handler').value.trim(),
+                cost: parseFloat($('m-cost').value) || 0,
+                signed: $('m-signed').value,
+                content: $('m-content').value.trim(),
+                notes: $('m-notes').value.trim()
+            });
+            toast('🗂️ 維護紀錄已儲存。', 'ok');
+            ['m-date', 'm-equipment', 'm-sn', 'm-type', 'm-handler', 'm-cost', 'm-content', 'm-notes'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+            await loadMaint();
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    // ── 我的密碼 ───────────────────────────────────────
+    async function submitMyPassword(e) {
+        e.preventDefault();
+        const cur = $('mp-current').value;
+        const n1 = $('mp-new').value;
+        const n2 = $('mp-confirm').value;
+        if (String(n1).length < 4) { toast('⚠️ 新密碼長度至少 4 碼。', 'warn'); return; }
+        if (n1 !== n2) { toast('⚠️ 兩次輸入的新密碼不一致。', 'warn'); return; }
+        try {
+            await post('/api/me/password', { currentPassword: cur, newPassword: n1 });
+            toast('🔒 密碼已更新，下次登入請使用新密碼。', 'ok');
+            ['mp-current', 'mp-new', 'mp-confirm'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    // ── 匯入 / 備份 ────────────────────────────────────
+    async function importAssets() {
+        const input = $('import-file');
+        const file = input && input.files && input.files[0];
+        if (!file) { toast('⚠️ 請先選擇 .xlsx 檔案。', 'warn'); return; }
+        if (!/\.xlsx$/i.test(file.name)) { toast('⚠️ 僅支援 .xlsx 格式。', 'warn'); return; }
+        const btn = $('import-btn');
+        btn.disabled = true; btn.textContent = '⏳ 匯入中...';
+        const box = $('import-result');
+        try {
+            const dataBase64 = await new Promise((resolve, reject) => {
+                const fr = new FileReader();
+                fr.onload = () => {
+                    const s = String(fr.result || '');
+                    resolve(s.indexOf(',') >= 0 ? s.slice(s.indexOf(',') + 1) : s);
+                };
+                fr.onerror = () => reject(new Error('讀取檔案失敗。'));
+                fr.readAsDataURL(file);
+            });
+            const res = await post('/api/import/assets', { fileName: file.name, dataBase64: dataBase64 });
+            const errs = res.errors || [];
+            if (box) {
+                box.classList.remove('hidden');
+                box.innerHTML = '<strong>✅ 匯入完成</strong><div>檔案：' + esc(res.fileName || file.name) + '</div>'
+                    + '<div>新增 <b>' + res.inserted + '</b> 筆　｜　略過（重複序號）<b>' + res.skipped + '</b> 筆　｜　失敗 <b>' + errs.length + '</b> 筆</div>'
+                    + (errs.length ? '<div style="margin-top:8px;color:#b91c1c;">' + errs.slice(0, 10).map(x => '第 ' + x.row + ' 列：' + esc(x.message)).join('<br>') + (errs.length > 10 ? '<br>…還有 ' + (errs.length - 10) + ' 筆' : '') + '</div>' : '');
+            }
+            toast('✅ 匯入完成：新增 ' + res.inserted + ' 筆', 'ok');
+            input.value = '';
+            await loadAssets();
+        } catch (err) {
+            if (box) { box.classList.remove('hidden'); box.innerHTML = '<strong style="color:#b91c1c;">❌ 匯入失敗</strong><div>' + esc(err.message) + '</div>'; }
+            toast('❌ 匯入失敗：' + err.message, 'err');
+        } finally {
+            btn.disabled = false; btn.textContent = '📂 開始匯入';
+        }
+    }
+
+    async function downloadBackup() {
+        const btn = $('backup-btn');
+        const old = btn.textContent;
+        btn.disabled = true; btn.textContent = '⏳ 準備中...';
+        try {
+            const res = await fetch('/api/backup/db', { credentials: 'same-origin' });
+            if (!res.ok) {
+                let msg = '備份失敗（HTTP ' + res.status + '）';
+                try { const d = await res.json(); if (d && d.message) msg = d.message; } catch (e) {}
+                throw new Error(msg);
+            }
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+            const a = document.createElement('a');
+            a.href = url; a.download = 'asset_data_backup_' + stamp + '.db';
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 8000);
+            toast('💾 資料庫備份已開始下載。', 'ok');
+        } catch (err) {
+            toast('❌ ' + (err.message || '備份失敗'), 'err');
+        } finally {
+            btn.disabled = false; btn.textContent = old;
+        }
+    }
+
+    // ── 事件綁定 / 啟動 ────────────────────────────────
     function bind() {
         $('login-form').addEventListener('submit', doLogin);
         $('logout-btn').addEventListener('click', doLogout);
-        $('export-btn').addEventListener('click', doExport);
-        $('refresh-btn').addEventListener('click', () => {
-            toast('🔄 重新載入資料...', 'info');
-            loadAll();
+
+        document.querySelectorAll('#side-nav .nav-item').forEach(el => {
+            el.addEventListener('click', () => showPage(el.getAttribute('data-page')));
         });
-        $('search').addEventListener('input', (e) => {
-            state.keyword = e.target.value || '';
-            renderTable();
-        });
+
+        const search = $('search');
+        if (search) search.addEventListener('input', (e) => { state.keyword = e.target.value || ''; renderAssetTable(); });
+        const refresh = $('refresh-btn');
+        if (refresh) refresh.addEventListener('click', async () => { toast('🔄 重新載入資料...', 'info'); await refreshPage(state.page); });
+        const exportBtn = $('export-btn');
+        if (exportBtn) exportBtn.addEventListener('click', doExport);
+
+        // 彈窗
         $('modal-close').addEventListener('click', closeDetail);
+        $('modal-edit-btn').addEventListener('click', openEditFromDetail);
+        $('edit-close').addEventListener('click', closeEdit);
+        $('form-edit-asset').addEventListener('submit', submitEditAsset);
+        $('e-delete').addEventListener('click', deleteCurrentAsset);
         $('detail-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'detail-modal') closeDetail(); });
-        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDetail(); });
+        $('edit-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'edit-modal') closeEdit(); });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDetail(); closeEdit(); } });
+
+        // 表單
+        $('form-asset').addEventListener('submit', submitAssetForm);
+        $('form-repair').addEventListener('submit', submitRepairForm);
+        $('form-transfer').addEventListener('submit', submitTransferForm);
+        $('t-asset').addEventListener('change', updateTransferHint);
+        $('t-to-dept').addEventListener('change', updateTransferHint);
+        $('form-vendor').addEventListener('submit', submitVendorForm);
+        $('v-cancel').addEventListener('click', clearVendorForm);
+        $('form-maint').addEventListener('submit', submitMaintForm);
+        $('form-field-cat').addEventListener('submit', (e) => { e.preventDefault(); addField('category'); });
+        $('form-field-dep').addEventListener('submit', (e) => { e.preventDefault(); addField('department'); });
+        $('form-user').addEventListener('submit', submitUserForm);
+        $('u-cancel').addEventListener('click', clearUserForm);
+        $('form-my-password').addEventListener('submit', submitMyPassword);
+
+        // 工具
+        $('import-btn').addEventListener('click', importAssets);
+        $('backup-btn').addEventListener('click', downloadBackup);
+        $('goto-dashboard').addEventListener('click', () => showPage('dashboard'));
     }
 
-    // ── 啟動 ───────────────────────────────────────────
     async function boot() {
-        // 版本號（公開端點，不需登入）
-        fetch('/api/health').then(r => r.json()).then(h => {
-            if (h && h.version) $('ver-label').textContent = 'v' + h.version;
-        }).catch(() => {});
-
-        // 嘗試沿用既有 session（重新整理不會被登出）
         try {
             const me = await api('/api/me');
-            if (me && me.user) showApp(me.user);
-        } catch (e) {
-            showLogin();
-        }
+            if (me && me.user) {
+                await loadFieldOptions();
+                showApp(me.user);
+                return;
+            }
+        } catch (e) { /* 未登入 */ }
+        showLogin();
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-        bind();
+        try { bind(); } catch (e) { console.error('bind failed', e); }
         boot();
     });
 })();
+
+
+
+
+
+
+
+
+
+
+
 
 
 

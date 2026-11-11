@@ -28,60 +28,326 @@
             <div class="login-hint">
                 <div>👑 管理者：<b>admin</b> ／ 預設密碼 <b>5508888</b></div>
                 <div>👤 一般使用者：<b>User</b> ／ 預設密碼 <b>1234</b></div>
-                <div class="note">目前為 Web 唯讀版：可查詢資料與匯出報表，不含修改功能。</div>
+                <div class="note">一般使用者僅能查詢與匯出報表。</div>
             </div>
         </div>
     </div>
 
     <!-- 📋 主畫面 -->
-    <div id="app-view" class="hidden">
-        <header class="topbar">
-            <div class="brand">📋 <span>IT 資產管理系統</span><small>Web 版</small></div>
-            <div class="topbar-right">
-                <span id="user-chip" class="user-chip">—</span>
-                <button type="button" class="btn btn-ghost" id="logout-btn">登出</button>
+    <div id="app-view" class="layout hidden">
+        <aside class="sidebar-web">
+            <div class="side-brand">📋 IT 資產管理<span>Web</span></div>
+            <nav id="side-nav">
+                <div class="nav-item active" data-page="dashboard">📊 總覽看板</div>
+                <div class="nav-group" data-admin>📁 資訊資產管理</div>
+                <div class="nav-item sub" data-admin data-page="asset-new">➕ 新增資訊資產</div>
+                <div class="nav-item sub" data-admin data-page="repairs">🔧 資訊資產維修</div>
+                <div class="nav-item sub" data-admin data-page="transfers">🔄 資訊資產轉移</div>
+                <div class="nav-item sub" data-admin data-page="recycle">🗑️ 資源回收桶</div>
+                <div class="nav-group" data-admin>🏢 廠商管理</div>
+                <div class="nav-item sub" data-admin data-page="vendors">📊 廠商與維護紀錄</div>
+                <div class="nav-group" data-admin>⚙️ 系統管理</div>
+                <div class="nav-item sub" data-admin data-page="fields">🧩 欄位管理</div>
+                <div class="nav-item sub" data-admin data-page="users">👥 帳號管理</div>
+                <div class="nav-item sub" data-admin data-page="tools">📥 匯入／備份</div>
+                <div class="nav-item sub" data-page="password">🔒 修改我的密碼</div>
+            </nav>
+            <div class="side-foot">
+                <div id="side-user">—</div>
+                <button type="button" class="btn btn-ghost btn-sm" id="logout-btn">登出</button>
             </div>
-        </header>
+        </aside>
 
-        <main class="container">
-            <div id="readonly-note" class="tip">ℹ️ 目前為<b>唯讀模式</b>（Phase 1）：可查詢資產、檢視履歷與匯出 Excel 盤點總表；新增／修改請使用單機版。</div>
+        <main class="main">
+            <header class="topbar">
+                <h2 id="page-title">📊 總覽看板</h2>
+                <div class="topbar-right"><span id="user-chip" class="user-chip">—</span></div>
+            </header>
 
-            <div class="card toolbar">
-                <input type="text" id="search" placeholder="🔍 搜尋資產編號、名稱、保管人、位置、規格..." autocomplete="off">
-                <div class="toolbar-actions">
-                    <span id="count-label" class="count">—</span>
-                    <button type="button" class="btn btn-success" id="export-btn">📥 匯出 Excel 盤點總表</button>
-                    <button type="button" class="btn btn-ghost" id="refresh-btn">🔄 重新整理</button>
-                </div>
+            <div class="content">
+                <!-- 總覽 -->
+                <section id="page-dashboard" class="page">
+                    <div id="stat-cards" class="stat-cards"></div>
+                    <div class="card toolbar">
+                        <input type="text" id="search" placeholder="🔍 搜尋資產編號、名稱、保管人、位置、規格..." autocomplete="off">
+                        <div class="toolbar-actions">
+                            <span id="count-label" class="count">—</span>
+                            <button type="button" class="btn btn-success" id="export-btn">📥 匯出 Excel 盤點總表</button>
+                            <button type="button" class="btn btn-ghost" id="refresh-btn">🔄 重新整理</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="table-wrap">
+                            <table id="asset-table">
+                                <thead><tr>
+                                    <th style="width:170px;">資產編號</th>
+                                    <th style="width:120px;">部門</th>
+                                    <th>設備名稱</th>
+                                    <th style="width:130px;">資產大類</th>
+                                    <th style="width:100px;">保管窗口</th>
+                                    <th style="width:130px;">購買廠商</th>
+                                    <th style="width:100px; text-align:center;">目前狀態</th>
+                                    <th style="width:130px;">當前位置</th>
+                                    <th style="width:170px;">規格/備註</th>
+                                    <th style="width:150px;">備註事項</th>
+                                </tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div id="empty-state" class="empty hidden">目前沒有符合條件的資產資料。</div>
+                    </div>
+                </section>
+
+                <!-- 新增資產 -->
+                <section id="page-asset-new" class="page hidden">
+                    <div class="card">
+                        <h3 class="card-title">📋 登記資訊資產</h3>
+                        <form id="form-asset" class="form-grid">
+                            <div class="form-group"><label>資產大類 (必填)</label><select id="a-category" required></select></div>
+                            <div class="form-group"><label>所屬部門 (必填)</label><select id="a-department" required></select></div>
+                            <div class="form-group"><label>資產編號</label><input type="text" id="a-no" readonly placeholder="由系統自動產生（類別-部門-日期-流水號）"></div>
+                            <div class="form-group"><label>設備 / 項目名稱 (必填)</label><input type="text" id="a-name" required></div>
+                            <div class="form-group"><label>原廠序列號 (S/N)</label><input type="text" id="a-sn"></div>
+                            <div class="form-group"><label>保管使用窗口</label><input type="text" id="a-custodian"></div>
+                            <div class="form-group"><label>購置擺放地點</label><input type="text" id="a-location"></div>
+                            <div class="form-group"><label>連動合作廠商</label><select id="a-vendor"></select></div>
+                            <div class="form-group"><label>維運狀態</label><select id="a-status"><option value="active">🟢 線上正常使用</option><option value="inventory">🔵 庫存備用</option></select></div>
+                            <div class="form-group"><label>採購日期</label><input type="date" id="a-purchase"></div>
+                            <div class="form-group"><label>保固到期日</label><input type="date" id="a-warranty"></div>
+                            <div class="form-group form-full"><label>資產規格 / 備註</label><textarea id="a-spec" rows="2" placeholder="例：i7-12700 / 32GB RAM / 1TB SSD"></textarea></div>
+                            <div class="form-group form-full"><label>維運備註說明</label><textarea id="a-notes" rows="2"></textarea></div>
+                            <div class="form-full" style="text-align:right;"><button type="submit" class="btn btn-primary">💾 確認登記此筆資產</button></div>
+                        </form>
+                    </div>
+                </section>
+
+                <!-- 維修 -->
+                <section id="page-repairs" class="page hidden">
+                    <div class="card">
+                        <h3 class="card-title">🔧 登記資訊資產維修</h3>
+                        <form id="form-repair" class="form-grid">
+                            <div class="form-group"><label>選擇維修資產 (必填)</label><select id="r-asset" required></select></div>
+                            <div class="form-group"><label>負責維修廠商 / 工程師</label><input type="text" id="r-vendor"></div>
+                            <div class="form-group form-full"><label>故障情形描述 (必填)</label><textarea id="r-fault" rows="2" required></textarea></div>
+                            <div class="form-group"><label>送修日期</label><input type="date" id="r-date"></div>
+                            <div class="form-group"><label>維修費用 (元)</label><input type="number" id="r-cost" min="0" step="1" placeholder="0"></div>
+                            <div class="form-group form-full"><label>備註</label><textarea id="r-notes" rows="2"></textarea></div>
+                            <div class="form-full" style="text-align:right;"><button type="submit" class="btn btn-primary">🔧 確認登記維修並轉為維修中</button></div>
+                        </form>
+                    </div>
+                    <div class="card">
+                        <h3 class="card-title">📋 維修履歷記錄</h3>
+                        <div class="table-wrap">
+                            <table id="repairs-table">
+                                <thead><tr><th style="width:160px;">資產編號</th><th>設備 / 故障情形</th><th style="width:130px;">維修廠商</th><th style="width:110px;">送修</th><th style="width:110px;">完工</th><th style="width:90px;text-align:right;">費用</th><th style="width:90px;text-align:center;">狀態</th><th style="width:150px;text-align:center;">操作</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 轉移 -->
+                <section id="page-transfers" class="page hidden">
+                    <div class="card">
+                        <h3 class="card-title">🔄 登記資訊資產轉移</h3>
+                        <form id="form-transfer" class="form-grid">
+                            <div class="form-group"><label>選擇轉移資產 (必填)</label><select id="t-asset" required></select></div>
+                            <div class="form-group"><label>轉移後部門 (必填，決定是否重新編號)</label><select id="t-to-dept" required></select></div>
+                            <div class="form-group"><label>原部門 / 保管人 / 位置</label><input type="text" id="t-from" readonly placeholder="選擇資產後自動帶入"></div>
+                            <div class="form-group"><label>新保管窗口 (必填)</label><input type="text" id="t-custodian" required></div>
+                            <div class="form-group"><label>新擺放地點 (必填)</label><input type="text" id="t-location" required></div>
+                            <div class="form-group"><label>轉移日期</label><input type="date" id="t-date"></div>
+                            <div class="form-group form-full"><label>轉移原因</label><input type="text" id="t-reason" placeholder="例：部門調動、辦公室搬遷"></div>
+                            <div class="form-group form-full"><label>備註</label><textarea id="t-notes" rows="2"></textarea></div>
+                            <div id="t-hint" class="form-full tip-mini">ℹ️ 選擇不同部門時，資產編號會依「類別-新部門-日期-流水號」重新產生。</div>
+                            <div class="form-full" style="text-align:right;"><button type="submit" class="btn btn-primary">🔄 確認轉移並更新資產</button></div>
+                        </form>
+                    </div>
+                    <div class="card">
+                        <h3 class="card-title">📋 資產轉移履歷</h3>
+                        <div class="table-wrap">
+                            <table id="transfers-table">
+                                <thead><tr><th style="width:160px;">資產編號</th><th>設備名稱</th><th style="width:150px;">部門變化</th><th style="width:160px;">保管人變化</th><th style="width:110px;">轉移日期</th><th>原因 / 備註</th><th style="width:90px;text-align:center;">操作</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 廠商與維護紀錄 -->
+                <section id="page-vendors" class="page hidden">
+                    <div class="card">
+                        <h3 class="card-title">🏢 新增 / 更新合作廠商</h3>
+                        <form id="form-vendor" class="form-grid">
+                            <input type="hidden" id="v-id">
+                            <div class="form-group"><label>廠商公司名稱 (必填)</label><input type="text" id="v-name" required></div>
+                            <div class="form-group"><label>主要服務專員</label><input type="text" id="v-rep"></div>
+                            <div class="form-group"><label>聯絡窗口電話</label><input type="text" id="v-phone"></div>
+                            <div class="form-group"><label>通訊地址</label><input type="text" id="v-address"></div>
+                            <div class="form-group"><label>資安 NDA 狀態</label><select id="v-nda"><option value="1">🔒 已簽署完成</option><option value="0">⚠️ 尚未簽署</option></select></div>
+                            <div class="form-group"><label>維護合約服務範疇</label><input type="text" id="v-items"></div>
+                            <div class="form-group"><label>維護合約開始日</label><input type="date" id="v-start"></div>
+                            <div class="form-group"><label>維護合約截止日</label><input type="date" id="v-end"></div>
+                            <div class="form-full" style="text-align:right;">
+                                <button type="button" class="btn btn-ghost" id="v-cancel" style="margin-right:8px;">清除 / 取消編輯</button>
+                                <button type="submit" class="btn btn-primary">💾 儲存廠商資料</button>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="card">
+                        <h3 class="card-title">📋 合作廠商清單</h3>
+                        <div class="table-wrap">
+                            <table id="vendors-table">
+                                <thead><tr><th>廠商名稱</th><th style="width:110px;">服務專員</th><th style="width:140px;">電話</th><th style="width:90px;text-align:center;">NDA</th><th style="width:180px;">維護合約</th><th style="width:140px;text-align:center;">操作</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3 class="card-title">📝 新增廠商維護紀錄</h3>
+                        <form id="form-maint" class="form-grid">
+                            <div class="form-group"><label>維護廠商 (必填)</label><select id="m-vendor" required></select></div>
+                            <div class="form-group"><label>維護日期 (必填)</label><input type="date" id="m-date" required></div>
+                            <div class="form-group"><label>維護設備 / 項目 (必填)</label><input type="text" id="m-equipment" required></div>
+                            <div class="form-group"><label>設備序號</label><input type="text" id="m-sn"></div>
+                            <div class="form-group"><label>維護類型</label><input type="text" id="m-type" placeholder="例：定期保養、叫修"></div>
+                            <div class="form-group"><label>處理人員</label><input type="text" id="m-handler"></div>
+                            <div class="form-group"><label>費用 (元)</label><input type="number" id="m-cost" min="0" step="1" placeholder="0"></div>
+                            <div class="form-group"><label>簽收</label><select id="m-signed"><option value="0">未簽收</option><option value="1">已簽收</option></select></div>
+                            <div class="form-group form-full"><label>維護內容</label><textarea id="m-content" rows="2"></textarea></div>
+                            <div class="form-group form-full"><label>備註</label><textarea id="m-notes" rows="2"></textarea></div>
+                            <div class="form-full" style="text-align:right;"><button type="submit" class="btn btn-primary">🗂️ 儲存維護紀錄</button></div>
+                        </form>
+                    </div>
+                    <div class="card">
+                        <h3 class="card-title">🗂️ 廠商維護歷程</h3>
+                        <div class="table-wrap">
+                            <table id="maint-table">
+                                <thead><tr><th style="width:110px;">日期</th><th style="width:150px;">廠商</th><th>設備 / 內容</th><th style="width:130px;">類型</th><th style="width:90px;text-align:right;">費用</th><th style="width:80px;text-align:center;">簽收</th><th style="width:90px;text-align:center;">操作</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 資源回收桶 -->
+                <section id="page-recycle" class="page hidden">
+                    <div class="card">
+                        <h3 class="card-title">🗑️ 資源回收桶</h3>
+                        <div class="tip-mini">ℹ️ 回收桶是「隱藏」而非永久刪除，按「🔄 還原」即可恢復到總覽。</div>
+                        <div class="table-wrap">
+                            <table id="recycle-table">
+                                <thead><tr><th style="width:170px;">資產編號</th><th>設備名稱</th><th style="width:130px;">部門</th><th style="width:130px;">資產大類</th><th style="width:120px;">保管窗口</th><th style="width:120px;text-align:center;">操作</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div id="recycle-empty" class="empty hidden">回收桶目前是空的。</div>
+                    </div>
+                </section>
+
+                <!-- 欄位管理 -->
+                <section id="page-fields" class="page hidden">
+                    <div class="card">
+                        <h3 class="card-title">🧩 欄位管理</h3>
+                        <div class="tip-mini">💡 可自行新增／移除「資產大類」「所屬部門」；名稱可中文，代號請用英數 1~8 碼（會用於資產編號）。</div>
+                        <div class="grid-2">
+                            <div class="panel">
+                                <strong style="color:#0f172a;">🏷️ 資產大類</strong>
+                                <form id="form-field-cat" class="inline-form">
+                                    <input type="text" id="fc-label" placeholder="名稱（例：監視器）" required>
+                                    <input type="text" id="fc-code" placeholder="代號（例：MON）" maxlength="8" required style="width:130px;">
+                                    <button type="submit" class="btn btn-primary btn-sm">➕ 新增</button>
+                                </form>
+                                <div class="table-wrap">
+                                    <table id="fields-cat-table">
+                                        <thead><tr><th>名稱</th><th style="width:80px;">代號</th><th style="width:90px;text-align:center;">操作</th></tr></thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="panel">
+                                <strong style="color:#0f172a;">🏢 所屬部門</strong>
+                                <form id="form-field-dep" class="inline-form">
+                                    <input type="text" id="fd-label" placeholder="名稱（例：放射科）" required>
+                                    <input type="text" id="fd-code" placeholder="代號（例：RD）" maxlength="8" required style="width:130px;">
+                                    <button type="submit" class="btn btn-primary btn-sm">➕ 新增</button>
+                                </form>
+                                <div class="table-wrap">
+                                    <table id="fields-dep-table">
+                                        <thead><tr><th>名稱</th><th style="width:80px;">代號</th><th style="width:90px;text-align:center;">操作</th></tr></thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 帳號管理 -->
+                <section id="page-users" class="page hidden">
+                    <div class="card">
+                        <h3 class="card-title">👥 帳號管理</h3>
+                        <div class="tip-mini">⚠️ 系統至少要保留一個「啟用中」的管理者；目前登入中的帳號不可停用、降級或刪除。</div>
+                        <form id="form-user" class="form-grid">
+                            <input type="hidden" id="u-id">
+                            <div class="form-group"><label>帳號 (英數 3~32 碼)</label><input type="text" id="u-username" maxlength="32" placeholder="例：mis01" required></div>
+                            <div class="form-group"><label>顯示名稱</label><input type="text" id="u-display" placeholder="例：王小明"></div>
+                            <div class="form-group"><label>密碼（新增必填；編輯時留空不改）</label><input type="password" id="u-password" placeholder="至少 4 碼"></div>
+                            <div class="form-group"><label>角色</label><select id="u-role"><option value="user">👤 一般使用者（查詢／匯出）</option><option value="admin">👑 管理者（全部功能）</option></select></div>
+                            <div class="form-group"><label>狀態</label><select id="u-active"><option value="1">✅ 啟用</option><option value="0">⛔ 停用</option></select></div>
+                            <div class="form-full" style="text-align:right;">
+                                <button type="button" class="btn btn-ghost" id="u-cancel" style="margin-right:8px;">取消編輯 / 清空</button>
+                                <button type="submit" class="btn btn-primary" id="u-submit">➕ 新增帳號</button>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="card">
+                        <h3 class="card-title">📋 帳號清單</h3>
+                        <div class="table-wrap">
+                            <table id="users-table">
+                                <thead><tr><th style="width:150px;">帳號</th><th>顯示名稱</th><th style="width:110px;text-align:center;">角色</th><th style="width:80px;text-align:center;">狀態</th><th style="width:150px;">最後登入</th><th style="width:330px;text-align:center;">操作</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 匯入 / 備份 -->
+                <section id="page-tools" class="page hidden">
+                    <div class="card">
+                        <h3 class="card-title">📥 匯入資產資料（Excel）</h3>
+                        <div class="tip-mini">📌 支援系統範本格式的 .xlsx：欄位標題列需有「設備/項目名稱」與「資產大類」；重複的「原廠序列號」會自動略過。</div>
+                        <div class="inline-form">
+                            <input type="file" id="import-file" accept=".xlsx" style="flex-grow:1;">
+                            <button type="button" class="btn btn-primary" id="import-btn">📂 開始匯入</button>
+                        </div>
+                        <div id="import-result" class="result-box hidden"></div>
+                    </div>
+                    <div class="card">
+                        <h3 class="card-title">💾 資料庫備份</h3>
+                        <div class="tip-mini">🛡️ 下載目前資料庫檔案（SQLite）。建議定期下載並保存到其他磁碟或 NAS。</div>
+                        <button type="button" class="btn btn-success" id="backup-btn">⬇️ 下載資料庫備份</button>
+                    </div>
+                    <div class="card">
+                        <h3 class="card-title">📊 匯出報表</h3>
+                        <div class="tip-mini">📋 盤點總表（含條碼貼紙欄）可直接在「總覽看板」右上角匯出。</div>
+                        <button type="button" class="btn btn-ghost" id="goto-dashboard">前往總覽看板</button>
+                    </div>
+                </section>
+
+                <!-- 修改我的密碼 -->
+                <section id="page-password" class="page hidden">
+                    <div class="card" style="max-width:620px;">
+                        <h3 class="card-title">🔒 修改我的密碼</h3>
+                        <form id="form-my-password" class="form-grid">
+                            <div class="form-group form-full"><label>目前密碼</label><input type="password" id="mp-current" required></div>
+                            <div class="form-group form-full"><label>新密碼（至少 4 碼）</label><input type="password" id="mp-new" required></div>
+                            <div class="form-group form-full"><label>確認新密碼</label><input type="password" id="mp-confirm" required></div>
+                            <div class="form-full" style="text-align:right;"><button type="submit" class="btn btn-primary">🔒 更新我的密碼</button></div>
+                        </form>
+                    </div>
+                </section>
             </div>
-
-            <div class="card">
-                <div class="table-wrap">
-                    <table id="asset-table">
-                        <thead>
-                            <tr>
-                                <th style="width:170px;">資產編號</th>
-                                <th style="width:120px;">部門</th>
-                                <th>設備名稱</th>
-                                <th style="width:130px;">資產大類</th>
-                                <th style="width:100px;">保管窗口</th>
-                                <th style="width:130px;">購買廠商</th>
-                                <th style="width:100px; text-align:center;">目前狀態</th>
-                                <th style="width:130px;">當前位置</th>
-                                <th style="width:170px;">規格/備註</th>
-                                <th style="width:150px;">備註事項</th>
-                            </tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-                <div id="empty-state" class="empty hidden">目前沒有符合條件的資產資料。</div>
-            </div>
-
-            <footer class="footer">
-                <span>IT 資產管理系統 · Web 版 <span id="ver-label">—</span></span>
-                <span>資料來源：伺服器端 SQLite（唯讀）</span>
-            </footer>
         </main>
     </div>
 
@@ -90,7 +356,10 @@
         <div class="modal-card">
             <div class="modal-head">
                 <strong id="modal-title">資產履歷</strong>
-                <button type="button" class="btn btn-ghost" id="modal-close">✕</button>
+                <div>
+                    <button type="button" class="btn btn-ghost btn-sm" id="modal-edit-btn" style="margin-right:6px;">✏️ 編輯</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="modal-close">✕</button>
+                </div>
             </div>
             <div class="modal-body">
                 <div id="modal-info" class="info-grid"></div>
@@ -102,7 +371,41 @@
         </div>
     </div>
 
+    <!-- ✏️ 編輯資產彈窗 -->
+    <div id="edit-modal" class="modal hidden">
+        <div class="modal-card" style="width:720px;">
+            <div class="modal-head">
+                <strong id="edit-title">✏️ 編輯資產</strong>
+                <button type="button" class="btn btn-ghost btn-sm" id="edit-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <form id="form-edit-asset" class="form-grid">
+                    <div class="form-group"><label>資產編號（不可修改）</label><input type="text" id="e-no" readonly></div>
+                    <div class="form-group"><label>設備 / 項目名稱 (必填)</label><input type="text" id="e-name" required></div>
+                    <div class="form-group"><label>原廠序列號 (S/N)</label><input type="text" id="e-sn"></div>
+                    <div class="form-group"><label>連動合作廠商</label><select id="e-vendor"></select></div>
+                    <div class="form-group"><label>維運狀態</label><select id="e-status"><option value="active">🟢 線上正常使用</option><option value="inventory">🔵 庫存備用</option><option value="repair">🟡 維修中</option><option value="scrapped">🔴 已報廢</option></select></div>
+                    <div class="form-group"><label>報廢原因（已報廢時必填）</label><input type="text" id="e-scrap"></div>
+                    <div class="form-group"><label>採購日期</label><input type="date" id="e-purchase"></div>
+                    <div class="form-group"><label>保固到期日</label><input type="date" id="e-warranty"></div>
+                    <div class="form-group form-full"><label>資產規格 / 備註</label><textarea id="e-spec" rows="2"></textarea></div>
+                    <div class="form-group form-full"><label>維運備註說明</label><textarea id="e-notes" rows="2"></textarea></div>
+                    <div class="form-full" style="display:flex; gap:10px; justify-content:flex-end;">
+                        <button type="button" class="btn btn-danger" id="e-delete">🗑️ 移至回收桶</button>
+                        <button type="submit" class="btn btn-primary">💾 儲存修改</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <div id="toast-box" class="toast-box"></div>
     <script src="/app.js"></script>
 </body>
 </html>
+
+
+
+
+
+

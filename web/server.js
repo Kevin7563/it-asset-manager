@@ -11,6 +11,7 @@ const path = require('path');
 
 const dbLib = require('./lib/db');
 const auth = require('./lib/auth');
+const service = require('./lib/service');
 const { buildInventoryXlsx } = require('./lib/export-inventory');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -26,12 +27,13 @@ function loadConfig() {
         port: envPort || parseInt(fileCfg.port, 10) || 3010,
         host: process.env.WEB_HOST || fileCfg.host || '0.0.0.0',
         dbPath: process.env.WEB_DB || fileCfg.dbPath || path.join(__dirname, '..', 'uploads', 'asset_data.db'),
-        readOnly: true
+        readOnly: false
     };
 }
 const CONFIG = loadConfig();
 
 let db = null;
+let ctx = null;
 let dbq = null;
 
 // ── HTTP 小工具 ─────────────────────────────────────────
@@ -191,6 +193,95 @@ async function handleExportInventory(res, session) {
     res.end(result.buffer);
 }
 
+// ── 權限 / 共用 ─────────────────────────────────────────
+function isAdmin(session) { return !!(session && session.role === 'admin'); }
+function denyReadOnly(res) { return sendJson(res, 403, { ok: false, message: '權限不足：此操作僅限管理者執行。' }); }
+function ok(res, data) { return sendJson(res, 200, Object.assign({ ok: true }, data || {})); }
+async function body(req, limit) {
+    try { return await readJsonBody(req, limit || (4 * 1024 * 1024)); }
+    catch (e) { throw new Error(e.message || '請求內容格式錯誤。'); }
+}
+
+// ── 寫入 API（一律需管理者）─────────────────────────────
+async function handleWriteApi(req, res, session, p) {
+    if (!isAdmin(session)) return denyReadOnly(res);
+    const m = req.method;
+    let mm;
+
+    // 資產
+    if (m === 'POST' && p === '/api/assets') return ok(res, await service.createAsset(ctx, await body(req), session));
+    if (m === 'PUT' && (mm = /^\/api\/assets\/(\d+)$/.exec(p))) return ok(res, await service.updateAsset(ctx, mm[1], await body(req), session));
+    if (m === 'DELETE' && (mm = /^\/api\/assets\/(\d+)$/.exec(p))) return ok(res, { asset: await service.deleteAsset(ctx, mm[1], session) });
+    if (m === 'POST' && (mm = /^\/api\/assets\/(\d+)\/restore$/.exec(p))) return ok(res, { asset: await service.restoreAsset(ctx, mm[1], session) });
+
+    // 維修
+    if (m === 'POST' && p === '/api/repairs') return ok(res, await service.createRepair(ctx, await body(req), session));
+    if (m === 'POST' && (mm = /^\/api\/repairs\/(\d+)\/complete$/.exec(p))) return ok(res, await service.completeRepair(ctx, mm[1], session));
+    if (m === 'DELETE' && (mm = /^\/api\/repairs\/(\d+)$/.exec(p))) return ok(res, { repair: await service.deleteRepair(ctx, mm[1]) });
+
+    // 轉移
+    if (m === 'POST' && p === '/api/transfers') return ok(res, await service.createTransfer(ctx, await body(req), session));
+    if (m === 'DELETE' && (mm = /^\/api\/transfers\/(\d+)$/.exec(p))) return ok(res, { transfer: await service.deleteTransfer(ctx, mm[1]) });
+
+    // 廠商
+    if (m === 'POST' && p === '/api/vendors') return ok(res, await service.saveVendor(ctx, await body(req), session));
+    if (m === 'PUT' && (mm = /^\/api\/vendors\/(\d+)$/.exec(p))) {
+        const d = await body(req); d.id = parseInt(mm[1], 10);
+        return ok(res, await service.saveVendor(ctx, d, session));
+    }
+    if (m === 'DELETE' && (mm = /^\/api\/vendors\/(\d+)$/.exec(p))) return ok(res, { vendor: await service.deleteVendor(ctx, mm[1]) });
+
+    // 廠商維護紀錄
+    if (m === 'POST' && p === '/api/vendor-maint') return ok(res, await service.createVendorMaint(ctx, await body(req), session));
+    if (m === 'DELETE' && (mm = /^\/api\/vendor-maint\/(\d+)$/.exec(p))) return ok(res, { record: await service.deleteVendorMaint(ctx, mm[1]) });
+
+    // 欄位管理
+    if (m === 'POST' && p === '/api/field-options') return ok(res, await service.addFieldOption(ctx, await body(req)));
+    if (m === 'DELETE' && (mm = /^\/api\/field-options\/(\d+)$/.exec(p))) return ok(res, { option: await service.deleteFieldOption(ctx, mm[1]) });
+
+    // 帳號管理
+    if (m === 'POST' && p === '/api/users') return ok(res, await service.createUserAccount(ctx, await body(req)));
+    if (m === 'PUT' && (mm = /^\/api\/users\/(\d+)$/.exec(p))) return ok(res, await service.updateUserAccount(ctx, mm[1], await body(req), { id: session.id }));
+    if (m === 'POST' && (mm = /^\/api\/users\/(\d+)\/password$/.exec(p))) {
+        const d = await body(req);
+        return ok(res, await service.resetUserPassword(ctx, mm[1], d.newPassword));
+    }
+    if (m === 'DELETE' && (mm = /^\/api\/users\/(\d+)$/.exec(p))) return ok(res, await service.deleteUserAccount(ctx, mm[1], { id: session.id }));
+
+    // 匯入資產（Excel，base64）
+    if (m === 'POST' && p === '/api/import/assets') {
+        const d = await body(req, 24 * 1024 * 1024);
+        const b64 = String(d.dataBase64 || '');
+        if (!b64) throw new Error('沒有收到檔案內容。');
+        const buf = Buffer.from(b64, 'base64');
+        if (!buf.length) throw new Error('檔案內容為空。');
+        const result = await service.importAssetsFromXlsx(ctx, buf, d.fileName || 'import.xlsx', session);
+        console.log(`[import] assets by ${session.username}: +${result.inserted}, skipped ${result.skipped}, errors ${result.errors.length}`);
+        return ok(res, result);
+    }
+
+    return sendJson(res, 404, { ok: false, message: '找不到 API。' });
+}
+
+// ── 備份下載（管理者）──────────────────────────────────
+async function handleBackupDownload(res, session) {
+    if (!isAdmin(session)) return denyReadOnly(res);
+    try { await ctx.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (e) {}
+    const dbPath = path.resolve(CONFIG.dbPath);
+    if (!fs.existsSync(dbPath)) { return sendJson(res, 404, { ok: false, message: '找不到資料庫檔案。' }); }
+    const stat = fs.statSync(dbPath);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '').replace(/-/g, '');
+    const ascii = 'asset_data_backup_' + stamp + '.db';
+    baseHeaders(res);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + ascii + '"');
+    res.setHeader('Content-Length', stat.size);
+    console.log(`[backup] db download by ${session.username} (${stat.size} bytes)`);
+    fs.createReadStream(dbPath).pipe(res);
+}
+
+
+
 // ── 路由 ────────────────────────────────────────────────
 async function requestHandler(req, res) {
     let parsed = null;
@@ -200,7 +291,7 @@ async function requestHandler(req, res) {
 
     try {
         if (p === '/api/health') {
-            return sendJson(res, 200, { ok: true, app: APP_NAME, version: APP_VERSION, db: !!db, mode: 'read-only', time: new Date().toISOString() });
+            return sendJson(res, 200, { ok: true, app: APP_NAME, version: APP_VERSION, db: !!db, mode: 'read-write', time: new Date().toISOString() });
         }
         if (p === '/api/login') {
             if (req.method !== 'POST') return sendJson(res, 405, { ok: false, message: '請使用 POST。' });
@@ -211,12 +302,34 @@ async function requestHandler(req, res) {
         if (p.indexOf('/api/') === 0) {
             const session = auth.getSession(req);
             if (!session) return sendJson(res, 401, { ok: false, error: 'unauthenticated', message: '請先登入。' });
-            if (p === '/api/me') return sendJson(res, 200, { ok: true, user: publicUser(session) });
-            if (p === '/api/assets') return await handleAssets(res);
-            if (p === '/api/field-options') return await handleFieldOptions(res);
-            if (p === '/api/export/inventory.xlsx') return await handleExportInventory(res, session);
-            if (/^\/api\/assets\/\d+$/.test(p)) return await handleAssetDetail(res, parseInt(p.split('/').pop(), 10));
-            return sendJson(res, 404, { ok: false, message: '找不到 API。' });
+
+            // ── 讀取 ──
+            if (req.method === 'GET') {
+                if (p === '/api/me') return sendJson(res, 200, { ok: true, user: publicUser(session) });
+                if (p === '/api/assets') { const assets = await service.listAssets(ctx); return ok(res, { count: assets.length, assets: assets }); }
+                if (p === '/api/recycle') { if (!isAdmin(session)) return denyReadOnly(res); const list = await service.listRecycle(ctx); return ok(res, { count: list.length, assets: list }); }
+                if (p === '/api/stats') return ok(res, await service.getStats(ctx));
+                if (p === '/api/field-options') return ok(res, await service.listFieldOptions(ctx));
+                if (p === '/api/repairs') return ok(res, { repairs: await service.listRepairs(ctx) });
+                if (p === '/api/transfers') return ok(res, { transfers: await service.listTransfers(ctx) });
+                if (p === '/api/vendors') return ok(res, { vendors: await service.listVendors(ctx) });
+                if (p === '/api/vendor-maint') return ok(res, { records: await service.listVendorMaint(ctx) });
+                if (p === '/api/users') { if (!isAdmin(session)) return denyReadOnly(res); return ok(res, { users: await service.listUsers(ctx) }); }
+                if (p === '/api/export/inventory.xlsx') return await handleExportInventory(res, session);
+                if (p === '/api/backup/db') return await handleBackupDownload(res, session);
+                const mDetail = /^\/api\/assets\/(\d+)$/.exec(p);
+                if (mDetail) return ok(res, await service.getAssetDetail(ctx, mDetail[1]));
+                return sendJson(res, 404, { ok: false, message: '找不到 API。' });
+            }
+
+            // ── 修改自己的密碼（一般使用者也可）──
+            if (req.method === 'POST' && p === '/api/me/password') {
+                const d = await body(req);
+                return ok(res, await service.changeOwnPassword(ctx, session.id, d.currentPassword, d.newPassword));
+            }
+
+            // ── 其他寫入（需管理者）──
+            return await handleWriteApi(req, res, session, p);
         }
 
         return serveStatic(req, res, p);
@@ -236,11 +349,11 @@ async function start() {
         console.error('   請先以單機版建立資料，或設定環境變數 WEB_DB 指向 asset_data.db');
         process.exit(1);
     }
-    db = await dbLib.openDb(dbPath, { readOnly: true });
-    dbq = {
-        all: (sql, args) => dbLib.all(db, sql, args),
-        get: (sql, args) => dbLib.get(db, sql, args)
-    };
+    db = await dbLib.openDb(dbPath, { readOnly: false });
+    ctx = dbLib.makeCtx(db);
+    dbq = ctx;
+    try { await ctx.exec('PRAGMA journal_mode = WAL'); } catch (e) {}
+    await service.ensureSchema(ctx);
 
     const server = http.createServer((req, res) => { requestHandler(req, res); });
     server.on('error', (err) => {
@@ -249,10 +362,10 @@ async function start() {
     });
     server.listen(CONFIG.port, CONFIG.host, () => {
         console.log('=========================================================');
-        console.log('  ' + APP_NAME + ' — Web 版（Phase 1：唯讀查詢）v' + APP_VERSION);
+        console.log('  ' + APP_NAME + ' — Web 版（完整功能）v' + APP_VERSION);
         console.log('  本機網址：http://localhost:' + CONFIG.port);
         console.log('  區網網址：http://<本機IP>:' + CONFIG.port);
-        console.log('  資料庫  ：' + dbPath + '（唯讀開啟，不會修改資料）');
+        console.log('  資料庫  ：' + dbPath + '（讀寫模式 WAL）');
         console.log('  預設帳號：admin / 5508888（管理者）、User / 1234（一般使用者）');
         console.log('=========================================================');
     });
