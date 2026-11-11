@@ -78,20 +78,37 @@ npm run build
 
 輸出：`dist\IT資產管理系統_安裝檔_v<版本>.exe`（NSIS，約 90 MB）
 
-### 產生更新資訊（上架更新伺服器用）
+### 產生更新資訊（GitHub Releases｜建議方式）
+
+程式內建「🔄 版本更新」直接讀取 GitHub 的最新 Release（`<repo>/releases/latest`），因此發行新版本只要：
 
 ```powershell
-# 1. 升版號
-npm version 1.2.2 --no-git-tag-version
+# 1. 升版號 + 更新 CHANGELOG
+npm version 1.3.2 --no-git-tag-version
 
 # 2. 重新打包
 npm run build
 
-# 3. 產生 latest.json + 英文檔名安裝檔
+# 3. 提交並建立標籤
+git add -A; git commit -m "chore: release v1.3.2"; git tag -a v1.3.2 -m "IT 資產管理系統 v1.3.2"
+git push origin main --tags
+
+# 4. 建立 GitHub Release 並「上傳安裝檔」（一定要有 .exe 資產，程式才抓得到）
+gh release create v1.3.2 --title v1.3.2 --notes-file notes.md
+gh release upload v1.3.2 "dist\ITAssetManager_Setup_v1.3.2.exe"
+```
+
+> GitHub 會為資產提供 `digest`（sha256），程式下載後會自動驗證。
+
+### 備援：自訂更新伺服器（latest.json）
+
+若要走內網／自架伺服器，可在「系統管理 → 版本更新 → 更新來源設定」切換為「自訂 latest.json」，或用下列腳本產生：
+
+```powershell
 .\產生更新資訊.ps1 -Notes "1. 修正xxx`n2. 新增yyy"
 ```
 
-上傳 `dist\latest.json` 與 `dist\ITAssetManager_Setup_v<版本>.exe` 至更新伺服器同一資料夾即可。
+上傳 `dist\latest.json` 與 `dist\ITAssetManager_Setup_v<版本>.exe` 至同一資料夾即可。
 
 ---
 

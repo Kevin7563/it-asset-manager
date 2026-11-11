@@ -1815,7 +1815,7 @@ function showVersionWindow() {
         <li><span class="k">開發日期</span><span class="v">2026.10.15</span></li>
         <li><span class="k">更新日期</span><span class="v">2026.11.10</span></li>
         <li><span class="k">目前版本</span><span class="v"><span class="ver">v${ver}</span></span></li>
-        <li><span class="k">本次更新</span><span class="v">新增「🔐 登入與權限」：管理者（admin）擁有全部功能，一般使用者僅能查詢與匯出報表；並新增「👥 帳號管理」可新增帳號、重設密碼、切換角色與停用刪除。密碼以 scrypt 雜湊儲存，寫入操作一律由後端攔阻。</span></li>
+        <li><span class="k">本次更新</span><span class="v">「🔄 版本更新」改為直接讀取 GitHub Releases 最新版本：可自動檢查、下載並安裝，無需自架更新伺服器；仍保留自訂 latest.json 與私有倉庫 Token 設定。</span></li>
         <li><span class="k">聯絡信箱</span><span class="v"><a class="mail" href="mailto:kevin7563@gmail.com">kevin7563@gmail.com</a></span></li>
         <li><span class="k">版權宣告</span><span class="v">版權所有，盜版必究</span></li>
         </ul>
@@ -2651,7 +2651,13 @@ const crypto = require('crypto');
 const UPD_APP_NAME = 'IT資產管理系統';
 const UPD_UA_NAME = 'ITAssetManager'; // ⚠️ HTTP Header 只能放 ASCII，不可用中文產品名
 
-const UPD_DEFAULT_FEED_URL = ''; // 如需內建預設更新伺服器，可填入例：https://your-server/it-asset-manager/latest.json
+// 🐙 預設更新來源：GitHub Releases（Latest）
+//    · 公開倉庫：直接讀取 https://api.github.com/repos/<owner>/<repo>/releases/latest
+//    · 私有倉庫：需於「更新來源設定」填入 GitHub Token（僅存在本機 update_config.json，不會寫進程式）
+const UPD_DEFAULT_GITHUB_REPO = 'Kevin7563/it-asset-manager';
+const UPD_DEFAULT_FEED_URL = ''; // 仍支援自訂 latest.json（內網／自架伺服器）
+const updGithubApiUrl = (repo) => 'https://api.github.com/repos/' + String(repo || UPD_DEFAULT_GITHUB_REPO).trim() + '/releases/latest';
+const updGithubReleasesPage = (repo) => 'https://github.com/' + String(repo || UPD_DEFAULT_GITHUB_REPO).trim() + '/releases';
 const updConfigFile = () => path.join(app.getPath('userData'), 'update_config.json'); // 使用者自訂更新伺服器設定
 const updStateFile = () => path.join(app.getPath('userData'), 'update_state.json');   // 最近一次檢查結果 (開頁即顯示)
 const updAppFeedFile = () => path.join(__dirname, 'update-feed.json');                // 隨程式附帶的更新伺服器設定 (選用)
@@ -2678,30 +2684,110 @@ function updCompareVersion(a, b) {
     return 0;
 }
 
-// 18-2. 更新伺服器網址 (使用者設定 > 隨程式附帶設定 > 內建預設)
-function updFeedInfo() {
-    const user = updReadJsonFile(updConfigFile());
-    if (user && typeof user.feedUrl === 'string' && user.feedUrl.trim() !== '') return { url: user.feedUrl.trim(), source: 'user' };
-    const shipped = updReadJsonFile(updAppFeedFile());
-    if (shipped && typeof shipped.feedUrl === 'string' && shipped.feedUrl.trim() !== '') return { url: shipped.feedUrl.trim(), source: 'app' };
-    if (UPD_DEFAULT_FEED_URL) return { url: UPD_DEFAULT_FEED_URL, source: 'default' };
-    return { url: '', source: 'none' };
+// 18-2. 更新來源設定 (使用者設定 update_config.json > 隨程式附帶 update-feed.json > 內建預設)
+//    kind：'github'（GitHub Releases）或 'feed'（自訂 latest.json 網址／內網路徑）
+function updConfigInfo() {
+    const user = updReadJsonFile(updConfigFile()) || {};
+    const shipped = updReadJsonFile(updAppFeedFile()) || {};
+    const pick = (key, fallback) => {
+        const uv = user[key];
+        if (uv !== undefined && uv !== null && String(uv).trim() !== '') return String(uv).trim();
+        const sv = shipped[key];
+        if (sv !== undefined && sv !== null && String(sv).trim() !== '') return String(sv).trim();
+        return fallback;
+    };
+    const feedUrl = pick('feedUrl', UPD_DEFAULT_FEED_URL) || '';
+    let repo = pick('githubRepo', UPD_DEFAULT_GITHUB_REPO) || UPD_DEFAULT_GITHUB_REPO;
+    repo = repo.replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/^\/+|\/+$/g, '');
+    const token = pick('githubToken', '') || '';
+    let kind = String(pick('source', '') || '').toLowerCase();
+    if (kind !== 'github' && kind !== 'feed') kind = (feedUrl !== '') ? 'feed' : 'github';
+    if (kind === 'feed' && feedUrl === '') kind = 'github';
+    const sourceLabel = (user && (user.feedUrl !== undefined || user.githubRepo !== undefined || user.source !== undefined)) ? 'user'
+        : ((shipped && (shipped.feedUrl !== undefined || shipped.githubRepo !== undefined)) ? 'app' : 'default');
+    return { kind: kind, repo: repo, token: token, feedUrl: feedUrl, sourceLabel: sourceLabel };
 }
 
-// 18-3. 線上取得文字 (JSON)；支援轉址與逾時
-function updHttpGetText(url, redirectLeft) {
+function updFeedInfo() {
+    const cfg = updConfigInfo();
+    if (cfg.kind === 'feed' && cfg.feedUrl !== '') {
+        return { kind: 'feed', url: cfg.feedUrl, source: cfg.sourceLabel, githubRepo: cfg.repo, githubToken: cfg.token, repo: cfg.repo, feedUrl: cfg.feedUrl };
+    }
+    return { kind: 'github', url: updGithubApiUrl(cfg.repo), source: cfg.sourceLabel, githubRepo: cfg.repo, githubToken: cfg.token, repo: cfg.repo, feedUrl: cfg.feedUrl };
+}
+
+// 🐙 GitHub Release → 通用版本資訊（挑選安裝檔、SHA256、更新說明）
+const updCleanMarkdown = (s) => String(s == null ? '' : s)
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+function updGithubReleaseToManifest(rel, repo) {
+    const r = (rel && typeof rel === 'object') ? rel : {};
+    if (r.message) throw new Error('GitHub 回應：' + r.message);
+    const version = String(r.tag_name || r.name || '').trim().replace(/^v/i, '');
+    if (version === '') throw new Error('GitHub Release 缺少版本標籤（tag_name），無法判斷版本。');
+    const assets = Array.isArray(r.assets) ? r.assets : [];
+    const score = (a) => {
+        const n = String(a.name || '');
+        return (/setup/i.test(n) ? 4 : 0) + (/安裝檔/.test(n) ? 3 : 0) + (/x64|amd64/i.test(n) ? 1 : 0) + (/\.exe$/i.test(n) ? 2 : 0);
+    };
+    const installer = assets.filter(a => /\.(exe|msi)$/i.test(String(a.name || ''))).sort((a, b) => score(b) - score(a))[0] || null;
+    if (!installer) {
+        throw new Error('GitHub Release v' + version + ' 內沒有可用的安裝檔（.exe / .msi）。請確認已將安裝檔上傳到該 Release。');
+    }
+    const digest = String(installer.digest || '').trim().toLowerCase();
+    const sha256 = digest.indexOf('sha256:') === 0 ? digest.slice(7) : '';
+    return {
+        version: version,
+        releaseDate: String(r.published_at || r.created_at || '').slice(0, 10),
+        notes: updCleanMarkdown(r.body || ''),
+        downloadUrl: String(installer.browser_download_url || ''),
+        fileName: String(installer.name || ''),
+        sha256: sha256,
+        size: Number(installer.size || 0) || 0,
+        homepage: String(r.html_url || updGithubReleasesPage(repo)),
+        tag: String(r.tag_name || ''),
+        source: 'github'
+    };
+}
+
+// 🐙 GitHub 常見錯誤 → 中文提示
+function updGithubErrorHint(err, opt) {
+    const msg = String(err && err.message ? err.message : err);
+    const repo = (opt && opt.repo) || UPD_DEFAULT_GITHUB_REPO;
+    if (/HTTP 404/.test(msg)) {
+        return new Error('找不到 GitHub Release（HTTP 404）。請確認：① 倉庫名稱正確（目前設定：' + repo + '）② 該倉庫已完成「發行（Release）」③ 若倉庫為 Private，請於下方填入 GitHub Token（或改為 Public）。');
+    }
+    if (/HTTP 401/.test(msg)) return new Error('GitHub Token 無效或已過期（HTTP 401），請重新產生 Token。');
+    if (/HTTP 403/.test(msg)) return new Error('GitHub 拒絕存取（HTTP 403）：可能已達匿名 API 次數上限，請稍後再試，或填入 GitHub Token。');
+    return err instanceof Error ? err : new Error(msg);
+}
+
+
+// 18-3. 線上取得文字 (JSON)；支援轉址、逾時與自訂標頭（GitHub API 需要）
+function updHttpGetText(url, redirectLeft, extraHeaders) {
     return new Promise((resolve, reject) => {
         let u;
         try { u = new URL(url); } catch (e) { reject(new Error('更新伺服器網址格式不正確：' + url)); return; }
         const mod = u.protocol === 'http:' ? http : https;
         let settled = false;
         const fail = (err) => { if (!settled) { settled = true; reject(err); } };
-        const req = mod.get(u, { timeout: 15000, headers: { 'User-Agent': UPD_UA_NAME + '/' + updCurrentVersion(), 'Cache-Control': 'no-cache' } }, (res) => {
+        const headers = Object.assign({ 'User-Agent': UPD_UA_NAME + '/' + updCurrentVersion(), 'Cache-Control': 'no-cache' }, extraHeaders || {});
+        const req = mod.get(u, { timeout: 15000, headers: headers }, (res) => {
             if ([301, 302, 303, 307, 308].indexOf(res.statusCode) >= 0 && res.headers.location) {
                 res.resume();
                 if (redirectLeft <= 0) { fail(new Error('更新伺服器轉址次數過多。')); return; }
-                const next = new URL(res.headers.location, u).toString();
-                updHttpGetText(next, redirectLeft - 1).then(resolve).catch(fail);
+                const nextUrl = new URL(res.headers.location, u);
+                // 轉到不同網域（例如 GitHub → raw/objects）時不帶自訂標頭，避免簽章驗證失敗
+                const nextHeaders = (nextUrl.hostname !== u.hostname) ? {} : (extraHeaders || {});
+                updHttpGetText(nextUrl.toString(), redirectLeft - 1, nextHeaders).then(resolve).catch(fail);
                 return;
             }
             if (res.statusCode !== 200) { res.resume(); fail(new Error('更新伺服器回應異常（HTTP ' + res.statusCode + '）。')); return; }
@@ -2718,15 +2804,28 @@ function updHttpGetText(url, redirectLeft) {
     });
 }
 
-// 18-4. 讀取版本資訊檔 (支援線上網址與內網共用資料夾路徑)
-async function updLoadManifest(feedUrl) {
+// 18-4. 讀取版本資訊（支援 GitHub Releases API、線上 latest.json、內網共用資料夾）
+async function updLoadManifest(feedUrl, opt) {
     const src = String(feedUrl || '').trim();
-    if (src === '') throw new Error('尚未設定更新伺服器網址，請先於「⚙️ 更新伺服器設定」填寫。');
+    const options = opt || {};
+    if (src === '') throw new Error('尚未設定更新來源，請先於「⚙️ 更新來源設定」設定 GitHub 倉庫或 latest.json 網址。');
     if (/^https?:\/\//i.test(src)) {
-        const text = await updHttpGetText(src, 5);
-        let m = null;
-        try { m = JSON.parse(updStripBom(text)); } catch (e) { throw new Error('更新伺服器回傳的內容不是有效的版本資訊（JSON 格式錯誤）。'); }
-        return m;
+        const isGithubApi = /^https?:\/\/api\.github\.com\//i.test(src);
+        const headers = isGithubApi
+            ? Object.assign({ 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+                options.token ? { 'Authorization': 'Bearer ' + options.token } : {})
+            : {};
+        let text = '';
+        try {
+            text = await updHttpGetText(src, 5, headers);
+        } catch (err) {
+            throw isGithubApi ? updGithubErrorHint(err, options) : err;
+        }
+        let raw = null;
+        try { raw = JSON.parse(updStripBom(text)); } catch (e) {
+            throw new Error(isGithubApi ? 'GitHub 回傳的內容無法解析（JSON 格式錯誤）。' : '更新伺服器回傳的內容不是有效的版本資訊（JSON 格式錯誤）。');
+        }
+        return isGithubApi ? updGithubReleaseToManifest(raw, options.repo) : raw;
     }
     let p = src.replace(/^file:\/+/i, '');
     try { if (fs.existsSync(p) && fs.statSync(p).isDirectory()) p = path.join(p, 'latest.json'); } catch (e) {}
@@ -2800,7 +2899,7 @@ function updSendProgress(force) {
         receivedMb: Math.round(d.received / 1048576 * 10) / 10, totalMb: Math.round(d.total / 1048576 * 10) / 10
     });
 }
-function updDownloadToFile(url, destPath, redirectLeft) {
+function updDownloadToFile(url, destPath, redirectLeft, extraHeaders) {
     return new Promise((resolve, reject) => {
         let u;
         try { u = new URL(url); } catch (e) { reject(new Error('下載網址格式不正確：' + url)); return; }
@@ -2809,11 +2908,15 @@ function updDownloadToFile(url, destPath, redirectLeft) {
         try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (e) {}
         let settled = false;
         const fail = (err) => { if (!settled) { settled = true; updDownloadState.active = false; reject(err); } };
-        const req = mod.get(u, { timeout: 30000, headers: { 'User-Agent': UPD_UA_NAME + '/' + updCurrentVersion(), 'Accept': '*/*', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } }, (res) => {
+        const headers = Object.assign({ 'User-Agent': UPD_UA_NAME + '/' + updCurrentVersion(), 'Accept': '*/*', 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }, extraHeaders || {});
+        const req = mod.get(u, { timeout: 30000, headers: headers }, (res) => {
             if ([301, 302, 303, 307, 308].indexOf(res.statusCode) >= 0 && res.headers.location) {
                 res.resume();
                 if (redirectLeft <= 0) { fail(new Error('下載轉址次數過多。')); return; }
-                updDownloadToFile(new URL(res.headers.location, u).toString(), destPath, redirectLeft - 1).then(resolve).catch(fail);
+                const nextUrl = new URL(res.headers.location, u);
+                // GitHub Release 會轉到 objects.githubusercontent.com（簽章網址），跨網域時不帶 Authorization
+                const nextHeaders = (nextUrl.hostname !== u.hostname) ? {} : (extraHeaders || {});
+                updDownloadToFile(nextUrl.toString(), destPath, redirectLeft - 1, nextHeaders).then(resolve).catch(fail);
                 return;
             }
             if (res.statusCode !== 200) { res.resume(); fail(new Error('下載失敗，伺服器回應 HTTP ' + res.statusCode + '。')); return; }
@@ -2872,8 +2975,14 @@ function updBuildStatus() {
         appName: UPD_APP_NAME,
         version: updCurrentVersion(),
         packaged: !!app.isPackaged,
-        feedUrl: feed.url,
-        feedConfigured: feed.url !== '',
+        sourceKind: feed.kind,
+        githubRepo: feed.githubRepo,
+        githubTokenSet: !!feed.githubToken,
+        githubReleasesPage: updGithubReleasesPage(feed.githubRepo),
+        defaultGithubRepo: UPD_DEFAULT_GITHUB_REPO,
+        feedUrl: feed.feedUrl || '',
+        effectiveUrl: feed.url,
+        feedConfigured: !!feed.url,
         feedSource: feed.source,
         defaultFeedUrl: UPD_DEFAULT_FEED_URL,
         updateDir: updDir(),
@@ -2892,15 +3001,20 @@ async function updRunCheck() {
     const feed = updFeedInfo();
     const current = updCurrentVersion();
     if (!feed.url) {
-        return { ok: false, reason: 'no-feed', message: '尚未設定更新伺服器網址，請先於「⚙️ 更新伺服器設定」填寫後再檢查。', currentVersion: current, feedUrl: '', feedConfigured: false };
+        return { ok: false, reason: 'no-feed', message: '尚未設定更新來源，請先設定 GitHub 倉庫或 latest.json 網址。', currentVersion: current, feedConfigured: false };
     }
-    const m = await updLoadManifest(feed.url);
+    const m = await updLoadManifest(feed.url, { token: feed.githubToken, repo: feed.githubRepo });
     const man = updNormalizeManifest(m, feed.url);
+    man.sourceKind = feed.kind;
+    man.githubRepo = feed.kind === 'github' ? feed.githubRepo : '';
+    if (!man.homepage && feed.kind === 'github') man.homepage = updGithubReleasesPage(feed.githubRepo);
     const cmp = updCompareVersion(man.version, current);
     updWriteJsonFile(updStateFile(), { lastCheck: new Date().toISOString(), latest: man });
     return {
         ok: true,
         currentVersion: current,
+        feedKind: feed.kind,
+        githubRepo: feed.kind === 'github' ? feed.githubRepo : '',
         feedUrl: feed.url,
         feedConfigured: true,
         manifest: man,
@@ -2927,7 +3041,7 @@ ipcMain.on('upd-download', async (event, data) => {
         const feed = updFeedInfo();
         const man = (data && data.manifest && data.manifest.version)
             ? updNormalizeManifest(data.manifest, String(data.manifest.feedUrl || feed.url))
-            : updNormalizeManifest(await updLoadManifest(feed.url), feed.url);
+            : updNormalizeManifest(await updLoadManifest(feed.url, { token: feed.githubToken, repo: feed.githubRepo }), feed.url);
         if (!man.downloadUrl) throw new Error('版本資訊檔未提供下載網址（downloadUrl 欄位）。');
         updEnsureDir();
         const fileName = updPackageName(man);
@@ -2940,7 +3054,8 @@ ipcMain.on('upd-download', async (event, data) => {
         updDownloadState.lastEmit = 0;
         if (mainWindow && mainWindow.webContents) mainWindow.webContents.send('upd-download-started', { fileName: fileName, version: man.version, total: updDownloadState.total });
         if (/^https?:\/\//i.test(man.downloadUrl)) {
-            await updDownloadToFile(man.downloadUrl, destPath, 5);
+            const extraHeaders = (feed.kind === 'github' && feed.githubToken) ? { 'Authorization': 'Bearer ' + feed.githubToken } : {};
+            await updDownloadToFile(man.downloadUrl, destPath, 5, extraHeaders);
         } else {
             // 內網／本機來源：直接複製檔案
             const src = man.downloadUrl.replace(/^file:\/+/i, '');
@@ -3072,10 +3187,11 @@ ipcMain.on('upd-open-homepage', async () => {
         let target = String(latest.homepage || '').trim();
         if (target === '') {
             const feed = updFeedInfo();
-            if (/^https?:\/\//i.test(feed.url)) target = feed.url;
+            if (feed.kind === 'github') target = updGithubReleasesPage(feed.githubRepo);
+            else if (/^https?:\/\//i.test(feed.feedUrl)) target = feed.feedUrl;
         }
         if (target === '') {
-            dialog.showMessageBox({ type: 'info', message: '目前沒有可開啟的更新網站網址。', detail: '請先於「⚙️ 更新伺服器設定」設定更新伺服器網址，或請管理者於版本資訊檔（latest.json）提供 homepage 欄位。' });
+            dialog.showMessageBox({ type: 'info', message: '目前沒有可開啟的更新網站網址。', detail: '請先設定 GitHub 倉庫或更新伺服器網址，或於版本資訊檔（latest.json）提供 homepage 欄位。' });
             return;
         }
         await shell.openExternal(target);
@@ -3087,14 +3203,27 @@ ipcMain.on('upd-open-homepage', async () => {
 // 18-19. 取得版本更新狀態 (開啟分頁時呼叫)
 ipcMain.on('upd-get-status', () => { updEnsureDir(); updPushStatus(); });
 
-// 18-20. 設定更新伺服器網址 (留空＝清除自訂設定，改回隨程式附帶或預設值)
+// 18-20. 設定更新來源（GitHub 倉庫 / Token / 自訂 latest.json；全部留空＝回到內建預設 GitHub）
 ipcMain.on('upd-save-feed', async (event, data) => {
     try {
-        const url = String((data && data.url) || '').trim();
-        if (url === '') { try { fs.unlinkSync(updConfigFile()); } catch (e) {} }
-        else if (!updWriteJsonFile(updConfigFile(), { feedUrl: url, savedAt: new Date().toISOString() })) throw new Error('無法寫入更新設定檔。');
+        const d = data || {};
+        const cfg = { savedAt: new Date().toISOString() };
+        if (d.source === 'github' || d.source === 'feed') cfg.source = d.source;
+        if (d.githubRepo !== undefined) cfg.githubRepo = String(d.githubRepo || '').trim();
+        if (d.githubToken !== undefined) cfg.githubToken = String(d.githubToken || '').trim();
+        const urlValue = (d.url !== undefined) ? d.url : d.feedUrl;
+        if (urlValue !== undefined) cfg.feedUrl = String(urlValue || '').trim();
+        const hasConfig = !!(cfg.githubRepo || cfg.githubToken || cfg.feedUrl || cfg.source === 'feed');
+        if (!hasConfig) { try { fs.unlinkSync(updConfigFile()); } catch (e) {} }
+        else if (!updWriteJsonFile(updConfigFile(), cfg)) throw new Error('無法寫入更新設定檔。');
         const feed = updFeedInfo();
-        if (mainWindow && mainWindow.webContents) mainWindow.webContents.send('upd-feed-saved', { url: url, cleared: url === '', feedUrl: feed.url, source: feed.source });
+        if (mainWindow && mainWindow.webContents) mainWindow.webContents.send('upd-feed-saved', {
+            source: feed.kind,
+            githubRepo: feed.githubRepo,
+            feedUrl: feed.feedUrl,
+            effectiveUrl: feed.url,
+            cleared: !hasConfig
+        });
     } catch (err) {
         if (mainWindow && mainWindow.webContents) mainWindow.webContents.send('upd-error', String(err && err.message ? err.message : err));
     }

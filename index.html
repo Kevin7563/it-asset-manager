@@ -227,7 +227,7 @@
         <div class="sidebar-footer">
             <div>系統開發by KevinChang</div>
             <div>Date:20261015</div>
-            <div>目前版本：<span id="app-version-label">v1.3.0</span></div>
+            <div>目前版本：<span id="app-version-label">v1.3.1</span></div>
             <div class="copyright">版權所有,盜版必究</div>
         </div>
     </div>
@@ -614,7 +614,7 @@
                     </div>
                     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                         <button class="btn btn-secondary" onclick="updOpenUpdateFolder()">📂 開啟更新檔資料夾</button>
-                        <button class="btn btn-secondary" onclick="updOpenHomepage()">🌐 開啟更新網站</button>
+                        <button class="btn btn-secondary" onclick="updOpenHomepage()">🌐 開啟 GitHub Releases</button>
                         <button class="btn btn-primary" onclick="updCheckUpdate()">🔍 檢查更新</button>
                     </div>
                 </div>
@@ -634,12 +634,38 @@
                     <div id="upd-notes" style="font-size:13px; color:#334155; white-space:pre-wrap; line-height:1.9;">按「🔍 檢查更新」取得最新版本資訊與更新說明。</div>
                 </div>
                 <div class="card" style="border-left:4px solid #7c3aed;">
-                    <strong style="color:#6d28d9; font-size:15px;">⚙️ 更新伺服器設定</strong>
-                    <div style="font-size:12px; color:#64748b; margin:6px 0 12px;">支援三種來源：① 線上網址 <span style="font-family:Consolas,monospace;">https://…/latest.json</span>　② 內網分享 <span style="font-family:Consolas,monospace;">\\server\share\latest.json</span>　③ 本機路徑 <span style="font-family:Consolas,monospace;">D:\update\latest.json</span>（留空＝清除自訂設定）</div>
-                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                        <input type="text" id="upd-feed-input" placeholder="https://your-server/it-asset-manager/latest.json" style="flex-grow:1; min-width:320px; font-family:Consolas,monospace; font-size:12px;">
+                    <strong style="color:#6d28d9; font-size:15px;">⚙️ 更新來源設定（GitHub Releases）</strong>
+                    <div style="font-size:12px; color:#64748b; margin:6px 0 12px; line-height:1.8;">
+                        預設直接讀取 GitHub 的「最新發行版本」：<span style="font-family:Consolas,monospace;">https://api.github.com/repos/&lt;owner&gt;/&lt;repo&gt;/releases/latest</span><br>
+                        ⚠️ 若倉庫為 <b>Private</b>，需填入具 <code>Contents: Read</code> 權限的 Token（僅儲存在本機 <code>update_config.json</code>，不會寫進程式）；<b>建議將更新用倉庫設為 Public</b>，使用者即可免設定直接更新。
+                    </div>
+                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+                        <label style="font-size:12px; color:#475569; font-weight:bold;">更新來源</label>
+                        <select id="upd-source-select" onchange="updApplySourceUI()" style="width:auto; min-width:260px;">
+                            <option value="github">🐙 GitHub Releases（最新發行版本）</option>
+                            <option value="feed">🌐 自訂 latest.json 網址／內網路徑</option>
+                        </select>
+                    </div>
+                    <div id="upd-github-settings">
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+                            <label style="font-size:12px; color:#475569; font-weight:bold; min-width:86px;">GitHub 倉庫</label>
+                            <input type="text" id="upd-repo-input" placeholder="owner/repo　例：Kevin7563/it-asset-manager" style="flex-grow:1; min-width:320px; font-family:Consolas,monospace; font-size:12px;">
+                        </div>
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <label style="font-size:12px; color:#475569; font-weight:bold; min-width:86px;">Token（選填）</label>
+                            <input type="password" id="upd-token-input" placeholder="私有倉庫才需要（ghp_… / github_pat_…）" style="flex-grow:1; min-width:320px; font-family:Consolas,monospace; font-size:12px;">
+                        </div>
+                    </div>
+                    <div id="upd-feed-settings" style="display:none;">
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <label style="font-size:12px; color:#475569; font-weight:bold; min-width:86px;">latest.json</label>
+                            <input type="text" id="upd-feed-input" placeholder="https://…/latest.json　或　\\server\share\latest.json" style="flex-grow:1; min-width:320px; font-family:Consolas,monospace; font-size:12px;">
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:14px;">
                         <button class="btn" style="background:#7c3aed;color:#fff;" onclick="updSaveFeed()">💾 儲存並檢查</button>
-                        <button class="btn btn-secondary" onclick="updResetFeed()">↩️ 清除設定</button>
+                        <button class="btn btn-secondary" onclick="updResetFeed()">↩️ 還原預設（GitHub）</button>
+                        <button class="btn btn-secondary" onclick="updOpenHomepage()">🌐 開啟 GitHub Release 頁面</button>
                     </div>
                     <div id="upd-feed-note" style="font-size:11px; color:#7c3aed; margin-top:8px;"></div>
                 </div>
@@ -647,7 +673,7 @@
                     <div style="display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap;">
                         <div>
                             <strong style="color:#1d4ed8; font-size:15px;">1-3-1　🔍 檢查最新版本</strong>
-                            <div style="font-size:12px; color:#64748b; margin-top:6px;">連線更新伺服器讀取版本資訊檔（latest.json），比對目前版本是否已有新版可更新。</div>
+                            <div style="font-size:12px; color:#64748b; margin-top:6px;">連線 GitHub 讀取「最新發行版本（Latest Release）」，比對目前版本是否已有新版可更新；也支援自訂 latest.json 來源。</div>
                         </div>
                         <button class="btn btn-primary" onclick="updCheckUpdate()" style="white-space:nowrap;">🔍 檢查更新</button>
                     </div>
@@ -2876,19 +2902,43 @@
         // 1-3-1 🔍 檢查最新版本
         function updCheckUpdate() {
             updSetBadge('🔍 檢查中...', '#dbeafe', '#1e40af');
-            showVendorToast('🔍 正在連線更新伺服器檢查版本...', 'info');
+            showVendorToast('🔍 正在連線 GitHub 檢查最新版本...', 'info');
             ipcRenderer.send('upd-check');
         }
-        // ⚙️ 更新伺服器設定（留空＝清除自訂設定）
+        // ⚙️ 更新來源設定（GitHub Releases / 自訂 latest.json）
+        function updApplySourceUI() {
+            const sel = document.getElementById('upd-source-select');
+            const kind = sel ? sel.value : 'github';
+            const gh = document.getElementById('upd-github-settings');
+            const fd = document.getElementById('upd-feed-settings');
+            if (gh) gh.style.display = (kind === 'github') ? 'block' : 'none';
+            if (fd) fd.style.display = (kind === 'feed') ? 'block' : 'none';
+        }
         function updSaveFeed() {
-            const el = document.getElementById('upd-feed-input');
-            const url = el ? String(el.value || '').trim() : '';
-            ipcRenderer.send('upd-save-feed', { url: url });
+            const sel = document.getElementById('upd-source-select');
+            const source = sel ? sel.value : 'github';
+            const repoEl = document.getElementById('upd-repo-input');
+            const tokenEl = document.getElementById('upd-token-input');
+            const feedEl = document.getElementById('upd-feed-input');
+            const payload = {
+                source: source,
+                githubRepo: repoEl ? String(repoEl.value || '').trim() : '',
+                githubToken: tokenEl ? String(tokenEl.value || '').trim() : ''
+            };
+            if (source === 'feed') payload.url = feedEl ? String(feedEl.value || '').trim() : '';
+            ipcRenderer.send('upd-save-feed', payload);
         }
         function updResetFeed() {
-            const el = document.getElementById('upd-feed-input');
-            if (el) el.value = '';
-            ipcRenderer.send('upd-save-feed', { url: '' });
+            const repoEl = document.getElementById('upd-repo-input');
+            const tokenEl = document.getElementById('upd-token-input');
+            const feedEl = document.getElementById('upd-feed-input');
+            const sel = document.getElementById('upd-source-select');
+            if (repoEl) repoEl.value = '';
+            if (tokenEl) tokenEl.value = '';
+            if (feedEl) feedEl.value = '';
+            if (sel) sel.value = 'github';
+            updApplySourceUI();
+            ipcRenderer.send('upd-save-feed', { source: 'github', githubRepo: '', githubToken: '', url: '' });
         }
         // 1-3-2 ⬇️ 下載更新檔
         async function updDownloadUpdate() {
@@ -2975,14 +3025,29 @@
                 const df = document.getElementById('upd-dir-full');
                 if (df) df.innerText = s.updateDir;
             }
+            // 🔄 更新來源設定（GitHub Releases / 自訂 latest.json）
+            const srcSel = document.getElementById('upd-source-select');
+            if (srcSel && document.activeElement !== srcSel) srcSel.value = (s.sourceKind === 'feed') ? 'feed' : 'github';
+            try { updApplySourceUI(); } catch (e) {}
+            const repoInput = document.getElementById('upd-repo-input');
+            if (repoInput && document.activeElement !== repoInput) repoInput.value = s.githubRepo || '';
+            const tokenInput = document.getElementById('upd-token-input');
+            if (tokenInput && document.activeElement !== tokenInput) {
+                tokenInput.value = '';
+                tokenInput.placeholder = s.githubTokenSet
+                    ? '✅ 已設定 Token（留空＝維持原設定；輸入新 Token 可更新）'
+                    : '私有倉庫才需要（ghp_… / github_pat_…）';
+            }
             const feedInput = document.getElementById('upd-feed-input');
             if (feedInput && document.activeElement !== feedInput) feedInput.value = s.feedUrl || '';
             const feedNote = document.getElementById('upd-feed-note');
             if (feedNote) {
                 const srcLabel = { user: '使用者自訂設定', app: '隨程式附帶設定 (update-feed.json)', default: '程式內建預設值' };
-                feedNote.innerText = s.feedConfigured
-                    ? `✅ 目前更新來源（${srcLabel[s.feedSource] || '自訂'}）：${s.feedUrl}`
-                    : '⚠️ 尚未設定更新伺服器網址，請填入版本資訊檔（latest.json）的位址後按「💾 儲存並檢查」。';
+                feedNote.innerText = (s.sourceKind === 'github')
+                    ? `✅ 目前來源：🐙 GitHub Releases（${srcLabel[s.feedSource] || '預設'}）　｜　${s.githubRepo}${s.githubTokenSet ? '（已設定 Token）' : ''}　｜　${s.githubReleasesPage}`
+                    : (s.feedConfigured
+                        ? `✅ 目前來源：🌐 自訂 latest.json（${srcLabel[s.feedSource] || '自訂'}）　｜　${s.feedUrl}`
+                        : '⚠️ 尚未設定 latest.json 網址，請填入後按「💾 儲存並檢查」，或改用 GitHub Releases。');
             }
             if (s.lastCheck) { const lc = document.getElementById('upd-last-check'); if (lc) lc.innerText = sysFmtTime(s.lastCheck); }
             if (s.latest && s.latest.version) {
@@ -3083,11 +3148,13 @@
             updShowProgress(false);
             showVendorToast('❌ 下載更新檔失敗：' + msg, 'err');
         });
-        // 更新伺服器設定
+        // 更新來源設定
         ipcRenderer.on('upd-feed-saved', (event, d) => {
+            window.globalUpdateState.latest = null;
             updRefreshState();
-            if (d && d.cleared) { showVendorToast('ℹ️ 已清除自訂更新伺服器設定。', 'warn'); return; }
-            showVendorToast('✅ 更新伺服器設定已儲存，開始檢查更新...', 'ok');
+            if (d && d.cleared) { showVendorToast('↩️ 已還原預設更新來源（GitHub Releases），開始檢查版本...', 'ok'); updCheckUpdate(); return; }
+            const label = (d && d.source === 'feed') ? '自訂 latest.json' : 'GitHub Releases';
+            showVendorToast(`✅ 更新來源已儲存（${label}），開始檢查版本...`, 'ok');
             updCheckUpdate();
         });
         // 更新檔管理與安裝

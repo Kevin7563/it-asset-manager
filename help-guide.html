@@ -52,7 +52,7 @@
 <header>
   <h1>📘 IT 資產管理系統 — 操作說明</h1>
   <p>從建立資產、維修、轉移，到廠商與系統管理，一頁看懂所有基本操作。</p>
-  <span class="badge">圖文操作指引　｜　適用版本 v1.3.0 以上</span>
+  <span class="badge">圖文操作指引　｜　適用版本 v1.3.1 以上</span>
 </header>
 <div class="wrap">
   <div class="nav">
@@ -261,12 +261,14 @@
     </ul>
     <h3>♻️ 資料庫還原</h3>
     <p>選擇對應的備份檔還原。系統會先自動建立「還原前備份」作為保險，再以備份內容覆蓋。</p>
-    <h3>🔄 版本更新</h3>
+    <h3>🔄 版本更新（GitHub Releases）</h3>
     <ol>
-      <li>按「🔍 檢查最新版本」連線更新伺服器讀取 <code>latest.json</code>。</li>
-      <li>若有新版，按「⬇️ 下載更新檔」下載並驗證 SHA256。</li>
-      <li>按「🚀 安裝並重新啟動」進行安裝（安裝前會自動全備份）。</li>
+      <li>按「🔍 檢查最新版本」，系統會直接連線 <b>GitHub</b> 讀取該倉庫的<b>最新發行版本（Latest Release）</b>，顯示版本號、發佈日期與更新說明。</li>
+      <li>若有新版，按「⬇️ 下載更新檔」下載安裝檔，並自動驗證 SHA256（GitHub 有提供 digest 時）。</li>
+      <li>按「🚀 安裝並重新啟動」進行安裝（安裝前會自動執行一次「💾 全備份」）。</li>
     </ol>
+    <div class="tip info"><span class="ico">💡</span><div>「更新來源設定」可切換成自訂 <code>latest.json</code>（內網共用資料夾或自架伺服器）；若 GitHub 倉庫為 <b>Private</b>，需填入具 <code>Contents: Read</code> 權限的 Token（僅存在本機）。</div></div>
+    <div class="tip ok"><span class="ico">✅</span><div>發行新版本時，只要在 GitHub 建立 Release 並上傳安裝檔（`.exe`），使用者按「檢查更新」即可看到並下載。</div></div>
     <h3>📥 匯入資料表</h3>
     <p>可用 Excel 範本批次匯入資產或廠商資料；匯入前會先顯示「新增/更新/略過/失敗」統計，再次確認後才寫入。</p>
     <p>資產範本已包含「<b>資產規格/備註</b>」欄位，可直接批次填入規格資料；匯入後同樣會出現在總覽、履歷與盤點總表。</p>

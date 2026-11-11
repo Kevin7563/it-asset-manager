@@ -5,6 +5,30 @@
 
 ---
 
+## [v1.3.1] - 2026-11-10
+
+### 新增／變更
+- 🔄 **「版本更新」改為直接讀取 GitHub Releases 最新版本**
+  - 預設來源：`https://api.github.com/repos/Kevin7563/it-asset-manager/releases/latest`
+  - 自動解析版本號（`tag_name`）、更新說明（Release body）、安裝檔（`.exe` / `.msi`）、檔案大小與 **SHA256**（GitHub `digest`）
+  - 下載支援 GitHub 轉址（`objects.githubusercontent.com`），跨網域時自動不帶 Token，避免簽章驗證失敗
+  - 檢查失敗會給出中文原因（404 = 倉庫名稱錯誤／無 Release／私有倉庫未提供 Token；401 = Token 無效；403 = API 次數上限）
+- ⚙️ **更新來源設定**改版
+  - 可切換「🐙 GitHub Releases」或「🌐 自訂 latest.json（網址／內網路徑）」
+  - 可自訂 GitHub 倉庫（`owner/repo`）與 Token（僅儲存於本機 `update_config.json`）
+  - 提供「↩️ 還原預設（GitHub）」與「🌐 開啟 GitHub Release 頁面」
+- 🔓 倉庫改為 **Public**，使用者無需任何設定即可檢查與下載更新
+
+### 相容性
+- 原有的 `latest.json`（自架伺服器／內網）更新方式**完全保留**，可在設定中切回
+- 更新前仍會自動「全備份」，資料庫與附件不受影響
+
+### 文件
+- `help-guide.html` 版本更新章節改寫為 GitHub 流程
+- `README.md` 補充 GitHub Release 發行方式
+
+---
+
 ## [v1.3.0] - 2026-11-10
 
 ### 新增
