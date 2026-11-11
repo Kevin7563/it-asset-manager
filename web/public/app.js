@@ -21,7 +21,9 @@
     };
     const PAGE_TITLES = {
         dashboard: '📊 總覽看板', 'asset-new': '➕ 新增資訊資產', repairs: '🔧 資訊資產維修',
-        transfers: '🔄 資訊資產轉移', recycle: '🗑️ 資源回收桶', vendors: '🏢 廠商與維護紀錄',
+        transfers: '🔄 資訊資產轉移', recycle: '🗑️ 資源回收桶',
+        'vendor-board': '📊 廠商管理看板', vendors: '➕ 新增廠商資訊', 'vendor-edit': '✏️ 廠商資料維護',
+        'vendor-maint-log': '🗂️ 廠商維護歷程看板', 'vendor-maint-add': '📝 新增廠商維護紀錄',
         fields: '🧩 欄位管理', users: '👥 帳號管理', tools: '📥 匯入／備份', password: '🔒 修改我的密碼'
     };
 
@@ -30,6 +32,7 @@
         assets: [], vendors: [], repairs: [], transfers: [], maint: [], recycle: [], users: [],
         catOpts: [], depOpts: [], categories: {}, departments: {},
         locks: { asset: {}, vendor: {} }, lockedAsset: 0, lockedVendor: 0,
+        vendorKeyword: '', vendorEditKeyword: '', maintKeyword: '', pendingVendorId: 0,
         keyword: '', page: 'dashboard', editingAssetId: 0, editingUserId: 0, editingUpdatedAt: ''
     };
 
@@ -125,10 +128,15 @@
 
     async function showPage(name) {
         if (!PAGE_TITLES[name]) name = 'dashboard';
-        const adminPages = ['asset-new', 'repairs', 'transfers', 'recycle', 'vendors', 'fields', 'users', 'tools'];
+        const adminPages = ['asset-new', 'repairs', 'transfers', 'recycle', 'vendor-board', 'vendors', 'vendor-edit', 'vendor-maint-log', 'vendor-maint-add', 'fields', 'users', 'tools'];
         if (!state.isAdmin && adminPages.indexOf(name) >= 0) {
             toast('⛔ 權限不足：此功能僅限管理者使用。', 'warn');
             return;
+        }
+        // 離開廠商維護頁時釋放編輯鎖
+        if (state.lockedVendor && name !== 'vendor-edit') {
+            post('/api/locks/release', { entity: 'vendor', id: state.lockedVendor }).catch(() => {});
+            state.lockedVendor = 0;
         }
         state.page = name;
         document.querySelectorAll('.page').forEach(el => el.classList.add('hidden'));
@@ -145,7 +153,11 @@
         if (name === 'repairs') { await Promise.all([loadAssets(), loadRepairs()]); }
         if (name === 'transfers') { await Promise.all([loadAssets(), loadTransfers()]); }
         if (name === 'recycle') { await loadRecycle(); }
-        if (name === 'vendors') { await Promise.all([loadVendors(), loadMaint()]); }
+        if (name === 'vendor-board') { await loadVendors(); renderVendorStats(); }
+        if (name === 'vendors') { await loadVendors(); clearVendorForm(); }
+        if (name === 'vendor-edit') { await loadVendors(); renderVendorPicker(); }
+        if (name === 'vendor-maint-log') { await loadMaint(); }
+        if (name === 'vendor-maint-add') { await loadVendors(); }
         if (name === 'fields') { await loadFieldOptions(); renderFields(); }
         if (name === 'users') { await loadUsers(); }
         if (name === 'tools') { await loadVersionInfo(); }
@@ -512,12 +524,24 @@
     }
 
     // ── 廠商 / 維護紀錄 / 回收桶 ───────────────────────
+    // ── 廠商管理看板 ────────────────────────────────────
+    function vendorMatches(v, kw) {
+        if (!kw) return true;
+        const hay = [v.name, v.representative, v.phone, v.address, v.service_items].join(' ').toLowerCase();
+        return hay.indexOf(kw) >= 0;
+    }
+
     function renderVendors() {
         const tbody = document.querySelector('#vendors-table tbody');
         if (!tbody) return;
+        const kw = String(state.vendorKeyword || '').trim().toLowerCase();
+        const list = state.vendors.filter(v => vendorMatches(v, kw));
         tbody.innerHTML = '';
-        if (!state.vendors.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">目前沒有廠商資料。</td></tr>'; return; }
-        state.vendors.forEach(v => {
+        const label = $('vendor-count-label');
+        if (label) label.textContent = kw ? ('符合 ' + list.length + ' / ' + state.vendors.length + ' 家') : ('共 ' + state.vendors.length + ' 家');
+        const empty = $('vendors-empty'); if (empty) empty.classList.toggle('hidden', list.length > 0);
+        if (!list.length) return;
+        list.forEach(v => {
             const nda = v.has_nda ? '<span class="badge badge-active">已簽署</span>' : '<span class="badge badge-scrapped">未簽署</span>';
             const period = (v.maint_start || v.maint_end) ? (esc(v.maint_start || '—') + ' ~ ' + esc(v.maint_end || '—')) : '<span class="muted">未設定</span>';
             const tr = document.createElement('tr');
@@ -527,47 +551,136 @@
                 + '<td style="text-align:center;">' + nda + '</td>'
                 + '<td style="font-size:12px;">' + period + '</td>'
                 + '<td style="text-align:center;white-space:nowrap;">'
-                + '<button class="btn btn-ghost btn-sm" data-edit-vendor="' + v.id + '">✏️ 編輯</button> '
+                + '<button class="btn btn-ghost btn-sm" data-goto-edit="' + v.id + '">✏️ 維護</button> '
                 + '<button class="btn btn-primary btn-sm" data-files-vendor="' + v.id + '">📎</button> '
                 + '<button class="btn btn-danger btn-sm" data-del-vendor="' + v.id + '">🗑️</button></td>';
             tbody.appendChild(tr);
         });
-        tbody.querySelectorAll('[data-edit-vendor]').forEach(btn => btn.addEventListener('click', () => startEditVendor(Number(btn.getAttribute('data-edit-vendor')))));
+        tbody.querySelectorAll('[data-goto-edit]').forEach(btn => btn.addEventListener('click', () => gotoVendorEdit(Number(btn.getAttribute('data-goto-edit')))));
         tbody.querySelectorAll('[data-files-vendor]').forEach(btn => btn.addEventListener('click', () => openVendorFiles(Number(btn.getAttribute('data-files-vendor')))));
         tbody.querySelectorAll('[data-del-vendor]').forEach(btn => btn.addEventListener('click', () => removeVendor(Number(btn.getAttribute('data-del-vendor')))));
     }
 
-    async function startEditVendor(id) {
-        const v = state.vendors.find(x => x.id === id);
-        if (!v) return;
+    function renderVendorStats() {
+        const box = $('vendor-stats');
+        if (!box) return;
+        const total = state.vendors.length;
+        const noNda = state.vendors.filter(v => !v.has_nda).length;
+        const today = new Date().toISOString().slice(0, 10);
+        const soon = state.vendors.filter(v => v.maint_end && v.maint_end >= today && v.maint_end <= new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10)).length;
+        const expired = state.vendors.filter(v => v.maint_end && v.maint_end < today).length;
+        const cards = [
+            { label: '廠商總數', value: total, cls: 'stat-blue' },
+            { label: '未簽 NDA', value: noNda, cls: 'stat-red' },
+            { label: '合約 60 天內到期', value: soon, cls: 'stat-orange' },
+            { label: '合約已到期', value: expired, cls: 'stat-gray' }
+        ];
+        box.innerHTML = cards.map(c => '<div class="stat-card ' + c.cls + '"><div class="stat-value">' + c.value + '</div><div class="stat-label">' + c.label + '</div></div>').join('');
+    }
+
+    // ── 廠商資料維護（獨立頁面）────────────────────────
+    async function gotoVendorEdit(id) {
+        state.pendingVendorId = id;
+        await showPage('vendor-edit');
+    }
+
+    function renderVendorPicker(keyword) {
+        const sel = $('vendor-edit-select');
+        if (!sel) return;
+        const kw = String(keyword == null ? (state.vendorEditKeyword || '') : keyword).trim().toLowerCase();
+        const list = state.vendors.filter(v => vendorMatches(v, kw));
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">-- 請選擇廠商（共 ' + list.length + ' 家）--</option>' +
+            list.map(v => '<option value="' + v.id + '">' + esc(v.name) + (v.phone ? '（' + esc(v.phone) + '）' : '') + '</option>').join('');
+        if (cur && list.some(v => String(v.id) === cur)) sel.value = cur;
+        if (state.pendingVendorId) {
+            const target = state.pendingVendorId;
+            state.pendingVendorId = 0;
+            sel.value = String(target);
+            loadVendorIntoEdit(target);
+        }
+    }
+
+    async function loadVendorIntoEdit(id) {
+        const v = state.vendors.find(x => x.id === Number(id));
+        if (!v) { toast('⚠️ 請先選擇廠商。', 'warn'); return; }
+        if (state.lockedVendor && state.lockedVendor !== v.id) {
+            await post('/api/locks/release', { entity: 'vendor', id: state.lockedVendor }).catch(() => {});
+            state.lockedVendor = 0;
+        }
         try {
             await post('/api/locks/acquire', { entity: 'vendor', id: v.id });
             state.lockedVendor = v.id;
-        } catch (err) {
-            toast(err.message || '目前無法編輯（可能有人正在編輯）。', 'warn');
-            return;
-        }
-        $('v-id').value = v.id;
-        $('v-name').value = v.name || '';
-        $('v-rep').value = v.representative || '';
-        $('v-phone').value = v.phone || '';
-        $('v-address').value = v.address || '';
-        $('v-nda').value = String(v.has_nda ? 1 : 0);
-        $('v-items').value = v.service_items || '';
-        $('v-start').value = (v.maint_start || '').slice(0, 10);
-        $('v-end').value = (v.maint_end || '').slice(0, 10);
-        toast('✏️ 正在編輯：' + v.name, 'info');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        } catch (err) { toast(err.message, 'warn'); return; }
+        $('ve-id').value = v.id;
+        $('ve-name').value = v.name || '';
+        $('ve-rep').value = v.representative || '';
+        $('ve-phone').value = v.phone || '';
+        $('ve-address').value = v.address || '';
+        $('ve-nda').value = String(v.has_nda ? 1 : 0);
+        $('ve-items').value = v.service_items || '';
+        $('ve-start').value = (v.maint_start || '').slice(0, 10);
+        $('ve-end').value = (v.maint_end || '').slice(0, 10);
+        $('form-vendor-edit').classList.remove('hidden');
+        const note = $('vendor-edit-note');
+        if (note) { note.className = 'tip-mini'; note.textContent = '✏️ 正在維護：' + v.name + '（已取得編輯鎖，其他人無法同時編輯）'; }
+        const sel = $('vendor-edit-select'); if (sel) sel.value = String(v.id);
     }
 
-    function clearVendorForm() {
+    function clearVendorEditForm() {
         if (state.lockedVendor) {
             post('/api/locks/release', { entity: 'vendor', id: state.lockedVendor }).catch(() => {});
             state.lockedVendor = 0;
         }
-        ['v-id', 'v-name', 'v-rep', 'v-phone', 'v-address', 'v-items', 'v-start', 'v-end'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+        ['ve-id', 've-name', 've-rep', 've-phone', 've-address', 've-items', 've-start', 've-end'].forEach(id => { const el = $(id); if (el) el.value = ''; });
+        const nda = $('ve-nda'); if (nda) nda.value = '1';
+        const f = $('form-vendor-edit'); if (f) f.classList.add('hidden');
+        const note = $('vendor-edit-note');
+        if (note) { note.className = 'tip-mini'; note.textContent = 'ℹ️ 請先選擇要維護的廠商（也可從「📊 廠商管理看板」按 ✏️ 直接帶入）。'; }
+    }
+
+    async function submitVendorEdit(e) {
+        e.preventDefault();
+        const id = parseInt($('ve-id').value, 10) || 0;
+        if (!id) { toast('⚠️ 請先選擇廠商。', 'warn'); return; }
+        try {
+            await put('/api/vendors/' + id, {
+                name: $('ve-name').value.trim(),
+                representative: $('ve-rep').value.trim(),
+                phone: $('ve-phone').value.trim(),
+                address: $('ve-address').value.trim(),
+                has_nda: $('ve-nda').value === '1',
+                service_items: $('ve-items').value.trim(),
+                maint_start: $('ve-start').value,
+                maint_end: $('ve-end').value
+            });
+            toast('💾 廠商資料已更新。', 'ok');
+            state.lockedVendor = 0;
+            await loadVendors();
+            clearVendorEditForm();
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    async function deleteVendorFromEdit() {
+        const id = parseInt($('ve-id').value, 10) || 0;
+        if (!id) return;
+        const v = state.vendors.find(x => x.id === id);
+        if (!confirmBox('🗑️ 確定要註銷「' + (v ? v.name : '') + '」？\n（相關資產會改為「其他 (預設)」，維護紀錄一併刪除）')) return;
+        try {
+            await del('/api/vendors/' + id);
+            toast('🗑️ 已註銷廠商。', 'ok');
+            state.lockedVendor = 0;
+            clearVendorEditForm();
+            await loadVendors();
+            await showPage('vendor-board');
+        } catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
+    function clearVendorForm() {
+        ['v-name', 'v-rep', 'v-phone', 'v-address', 'v-items', 'v-start', 'v-end'].forEach(id => { const el = $(id); if (el) el.value = ''; });
         const nda = $('v-nda'); if (nda) nda.value = '1';
     }
+
 
     async function removeVendor(id) {
         if (!confirmBox('🗑️ 確定要刪除此廠商？\n（相關資產會改為「其他 (預設)」，維護紀錄一併刪除）')) return;
@@ -578,9 +691,17 @@
     function renderMaint() {
         const tbody = document.querySelector('#maint-table tbody');
         if (!tbody) return;
+        const kw = String(state.maintKeyword || '').trim().toLowerCase();
+        const list = state.maint.filter(r => {
+            if (!kw) return true;
+            return [r.vendor_name, r.equipment, r.equipment_sn, r.maint_type, r.content, r.notes, r.handler].join(' ').toLowerCase().indexOf(kw) >= 0;
+        });
         tbody.innerHTML = '';
-        if (!state.maint.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty">目前沒有維護紀錄。</td></tr>'; return; }
-        state.maint.forEach(r => {
+        const label = $('maint-count-label');
+        if (label) label.textContent = kw ? ('符合 ' + list.length + ' / ' + state.maint.length + ' 筆') : ('共 ' + state.maint.length + ' 筆');
+        const empty = $('maint-empty'); if (empty) empty.classList.toggle('hidden', list.length > 0);
+        if (!list.length) return;
+        list.forEach(r => {
             const tr = document.createElement('tr');
             const content = [r.content, r.notes].filter(x => x && String(x).trim()).join('　');
             tr.innerHTML = '<td>' + esc(r.maint_date || '—') + '</td>'
@@ -886,9 +1007,8 @@
     }
 
     // ── 廠商 / 維護紀錄 ────────────────────────────────
-    async function submitVendorForm(e) {
+    async function submitCreateVendor(e) {
         e.preventDefault();
-        const id = parseInt($('v-id').value, 10) || 0;
         const payload = {
             name: $('v-name').value.trim(),
             representative: $('v-rep').value.trim(),
@@ -899,14 +1019,10 @@
             maint_start: $('v-start').value,
             maint_end: $('v-end').value
         };
+        if (!payload.name) { toast('⚠️ 請填寫廠商公司名稱。', 'warn'); return; }
         try {
-            if (id) {
-                await put('/api/vendors/' + id, payload);
-                toast('💾 廠商資料已更新：' + payload.name, 'ok');
-            } else {
-                await post('/api/vendors', payload);
-                toast('✅ 已新增廠商：' + payload.name, 'ok');
-            }
+            const res = await post('/api/vendors', payload);
+            toast((res.created ? '✅ 已新增廠商：' : '💾 已更新既有廠商：') + payload.name, 'ok');
             clearVendorForm();
             await loadVendors();
         } catch (err) { toast('❌ ' + err.message, 'err'); }
@@ -929,7 +1045,7 @@
             });
             toast('🗂️ 維護紀錄已儲存。', 'ok');
             ['m-date', 'm-equipment', 'm-sn', 'm-type', 'm-handler', 'm-cost', 'm-content', 'm-notes'].forEach(id => { const el = $(id); if (el) el.value = ''; });
-            await loadMaint();
+            await showPage('vendor-maint-log');
         } catch (err) { toast('❌ ' + err.message, 'err'); }
     }
 
@@ -1240,8 +1356,20 @@
         $('form-transfer').addEventListener('submit', submitTransferForm);
         $('t-asset').addEventListener('change', updateTransferHint);
         $('t-to-dept').addEventListener('change', updateTransferHint);
-        $('form-vendor').addEventListener('submit', submitVendorForm);
+        $('form-vendor').addEventListener('submit', submitCreateVendor);
         $('v-cancel').addEventListener('click', clearVendorForm);
+        $('form-vendor-edit').addEventListener('submit', submitVendorEdit);
+        $('ve-delete').addEventListener('click', deleteVendorFromEdit);
+        $('ve-cancel').addEventListener('click', clearVendorEditForm);
+        $('ve-files').addEventListener('click', () => { const id = parseInt($('ve-id').value, 10) || 0; if (!id) { toast('⚠️ 請先選擇廠商。', 'warn'); return; } openVendorFiles(id); });
+        $('vendor-edit-load').addEventListener('click', () => loadVendorIntoEdit($('vendor-edit-select').value));
+        $('vendor-edit-select').addEventListener('change', () => { const v = $('vendor-edit-select').value; if (v) loadVendorIntoEdit(v); });
+        $('vendor-edit-search').addEventListener('input', (e) => { state.vendorEditKeyword = e.target.value; renderVendorPicker(e.target.value); });
+        $('vendor-search').addEventListener('input', (e) => { state.vendorKeyword = e.target.value; renderVendors(); });
+        $('goto-vendor-add').addEventListener('click', () => showPage('vendors'));
+        $('goto-maint-add').addEventListener('click', () => showPage('vendor-maint-add'));
+        $('maint-search').addEventListener('input', (e) => { state.maintKeyword = e.target.value; renderMaint(); });
+        $('m-cancel').addEventListener('click', () => { ['m-date', 'm-equipment', 'm-sn', 'm-type', 'm-handler', 'm-cost', 'm-content', 'm-notes'].forEach(id => { const el = $(id); if (el) el.value = ''; }); });
         $('form-maint').addEventListener('submit', submitMaintForm);
         $('form-field-cat').addEventListener('submit', (e) => { e.preventDefault(); addField('category'); });
         $('form-field-dep').addEventListener('submit', (e) => { e.preventDefault(); addField('department'); });
