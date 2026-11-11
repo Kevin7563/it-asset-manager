@@ -33,6 +33,7 @@
         catOpts: [], depOpts: [], categories: {}, departments: {},
         locks: { asset: {}, vendor: {} }, lockedAsset: 0, lockedVendor: 0,
         vendorKeyword: '', vendorEditKeyword: '', maintKeyword: '', pendingVendorId: 0, vendorModalId: 0,
+        maintSort: 'desc', maintModalId: 0,
         keyword: '', page: 'dashboard', editingAssetId: 0, editingUserId: 0, editingUpdatedAt: ''
     };
 
@@ -113,7 +114,7 @@
         state.user = null; state.isAdmin = false;
         state.assets = []; state.users = [];
         document.querySelectorAll('table tbody').forEach(tb => { tb.innerHTML = ''; });
-        ['detail-modal', 'edit-modal', 'vendor-modal', 'files-modal'].forEach(id => { const m = $(id); if (m) m.classList.add('hidden'); });
+        ['detail-modal', 'edit-modal', 'vendor-modal', 'maint-modal', 'files-modal'].forEach(id => { const m = $(id); if (m) m.classList.add('hidden'); });
         toast('👋 您已登出系統。', 'ok');
         showLogin();
     }
@@ -698,6 +699,32 @@
         catch (err) { toast('❌ ' + err.message, 'err'); }
     }
 
+    function renderMaintStats() {
+        const now = new Date();
+        const ym = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        const set = (id, val) => { const el = $(id); if (el) el.textContent = String(val); };
+        set('maint-stat-total', state.maint.length);
+        set('maint-stat-month', state.maint.filter(r => String(r.maint_date || '').startsWith(ym)).length);
+        set('maint-stat-signed', state.maint.filter(r => Number(r.signed) === 1).length);
+        set('maint-stat-unsigned', state.maint.filter(r => Number(r.signed) !== 1).length);
+        set('maint-stat-cost', money(state.maint.reduce((s, r) => s + (parseFloat(r.cost) || 0), 0)));
+    }
+
+    function renderMaintExportVendors() {
+        const sel = $('maint-export-vendor');
+        if (!sel) return;
+        const names = [];
+        state.maint.forEach(r => {
+            const n = String(r.vendor_name || '').trim();
+            if (n && names.indexOf(n) < 0) names.push(n);
+        });
+        names.sort((a, b) => a.localeCompare(b, 'zh-Hant'));
+        const cur = sel.value;
+        sel.innerHTML = '<option value="">-- 選擇要匯出的廠商（未選＝全部）--</option>'
+            + names.map(n => '<option value="' + esc(n) + '">' + esc(n) + '</option>').join('');
+        if (cur && names.indexOf(cur) >= 0) sel.value = cur;
+    }
+
     function renderMaint() {
         const tbody = document.querySelector('#maint-table tbody');
         if (!tbody) return;
@@ -705,33 +732,63 @@
         const list = state.maint.filter(r => {
             if (!kw) return true;
             return [r.vendor_name, r.equipment, r.equipment_sn, r.maint_type, r.content, r.notes, r.handler].join(' ').toLowerCase().indexOf(kw) >= 0;
+        }).sort((a, b) => {
+            const da = String(a.maint_date || ''), db = String(b.maint_date || '');
+            const cmp = da.localeCompare(db);
+            return state.maintSort === 'asc' ? cmp : -cmp;
         });
+        const sortBtn = $('maint-sort-btn');
+        if (sortBtn) sortBtn.textContent = state.maintSort === 'asc' ? '▲' : '▼';
+
         tbody.innerHTML = '';
         const label = $('maint-count-label');
         if (label) label.textContent = kw ? ('符合 ' + list.length + ' / ' + state.maint.length + ' 筆') : ('共 ' + state.maint.length + ' 筆');
         const empty = $('maint-empty'); if (empty) empty.classList.toggle('hidden', list.length > 0);
+        renderMaintStats();
+        renderMaintExportVendors();
         if (!list.length) return;
+
         list.forEach(r => {
             const tr = document.createElement('tr');
+            const docCnt = splitPaths(r.doc_files).length;
             const content = [r.content, r.notes].filter(x => x && String(x).trim()).join('　');
-            tr.innerHTML = '<td>' + esc(r.maint_date || '—') + '</td>'
+            const signed = Number(r.signed) === 1
+                ? '<span class="badge badge-active" style="white-space:nowrap;">✍️ 已簽收</span>'
+                : '<span class="badge badge-scrapped" style="white-space:nowrap;">⏳ 未簽收</span>';
+            const docBadge = docCnt
+                ? '<span class="badge badge-inventory" style="white-space:nowrap;">📎 ' + docCnt + ' 份</span>'
+                : '<span class="muted" style="font-size:12px;white-space:nowrap;">無單據</span>';
+            tr.innerHTML = '<td><strong>' + esc(r.maint_date || '—') + '</strong></td>'
                 + '<td>' + ((r.vendor_id && state.vendors.some(x => x.id === r.vendor_id))
                     ? '<a href="#" class="name-link" data-view-vendor="' + r.vendor_id + '" title="點擊查看廠商完整資訊">' + esc(r.vendor_name || '') + '</a>'
                     : esc(r.vendor_name || '')) + '</td>'
                 + '<td><strong>' + esc(r.equipment || '') + '</strong>' + (r.equipment_sn ? ' <span class="sub">(' + esc(r.equipment_sn) + ')</span>' : '')
                 + (content ? '<div class="sub">' + esc(content) + '</div>' : '') + '</td>'
-                + '<td>' + dash(r.maint_type) + '</td>'
-                + '<td style="text-align:right;">' + (Number(r.cost) > 0 ? money(r.cost) : '—') + '</td>'
-                + '<td style="text-align:center;">' + (r.signed ? '✅' : '—') + '</td>'
+                + '<td><span class="sub" style="font-size:12.5px;">' + esc(r.maint_type || '—') + '</span></td>'
+                + '<td>' + dash(r.handler) + '</td>'
+                + '<td style="text-align:right;">' + (Number(r.cost) > 0 ? money(r.cost) : '0') + '</td>'
+                + '<td style="text-align:center;">' + signed + '</td>'
+                + '<td style="text-align:center;">' + docBadge + '</td>'
                 + '<td style="text-align:center;white-space:nowrap;">'
-                + '<button class="btn btn-primary btn-sm" data-files-maint="' + r.id + '">📎</button> '
+                + '<button class="btn btn-primary btn-sm" data-maint-view="' + r.id + '">🔍 檢視</button> '
                 + '<button class="btn btn-danger btn-sm" data-del-maint="' + r.id + '">🗑️</button></td>';
             tbody.appendChild(tr);
         });
+        tbody.querySelectorAll('[data-maint-view]').forEach(btn => btn.addEventListener('click', () => openMaintDetail(Number(btn.getAttribute('data-maint-view')))));
         tbody.querySelectorAll('[data-files-maint]').forEach(btn => btn.addEventListener('click', () => openMaintDocs(Number(btn.getAttribute('data-files-maint')))));
         tbody.querySelectorAll('[data-view-vendor]').forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); openVendorDetail(Number(a.getAttribute('data-view-vendor'))); }));
         tbody.querySelectorAll('[data-del-maint]').forEach(btn => btn.addEventListener('click', () => removeMaint(Number(btn.getAttribute('data-del-maint')))));
     }
+
+    async function exportMaintByVendor() {
+        const sel = $('maint-export-vendor');
+        const name = sel ? String(sel.value || '').trim() : '';
+        const url = '/api/export/vendor-maint.xlsx' + (name ? '?name=' + encodeURIComponent(name) : '');
+        const fallback = '廠商維護歷程' + (name ? '_' + name : '') + '.xlsx';
+        try { await downloadBlob(url, fallback); toast('📥 維護歷程已開始下載' + (name ? '（' + name + '）' : ''), 'ok'); }
+        catch (err) { toast('❌ ' + err.message, 'err'); }
+    }
+
 
     async function removeMaint(id) {
         if (!confirmBox('🗑️ 確定刪除此維護紀錄？')) return;
@@ -1246,6 +1303,65 @@
         $('files-modal').classList.remove('hidden');
     }
 
+    // ── 🗂️ 廠商維護紀錄明細彈窗（🔍 檢視）──────────────
+    function closeMaintDetail() {
+        const m = $('maint-modal'); if (m) m.classList.add('hidden');
+        state.maintModalId = 0;
+    }
+
+    function renderMaintDocs() {
+        const box = $('maint-modal-docs');
+        if (!box) return;
+        const r = state.maint.find(x => x.id === state.maintModalId);
+        if (!r) { box.innerHTML = ''; return; }
+        const docs = splitPaths(r.doc_files);
+        if (!docs.length) {
+            box.innerHTML = '<div class="mini-empty">尚未上傳維護單據（可按右上「📎 單據管理」上傳）。</div>';
+            return;
+        }
+        box.innerHTML = docs.map((p, i) => '<div class="mini-item" style="display:flex;justify-content:space-between;gap:10px;align-items:center;">'
+            + (state.isAdmin
+                ? '<a class="file-chip" href="/api/files?path=' + encodeURIComponent(p) + '" target="_blank" rel="noopener" title="' + esc(fileBaseName(p)) + '">📄 ' + (i + 1) + '. ' + esc(fileBaseName(p)) + '</a>'
+                : '<span class="file-chip plain">📄 ' + (i + 1) + '. ' + esc(fileBaseName(p)) + '</span>')
+            + '<button type="button" class="btn btn-danger btn-sm" data-del-maint-doc="' + esc(p) + '" style="white-space:nowrap;">🗑️</button></div>').join('');
+
+        box.querySelectorAll('[data-del-maint-doc]').forEach(btn => btn.addEventListener('click', async () => {
+            const p = btn.getAttribute('data-del-maint-doc');
+            if (!confirmBox('🗑️ 確定要刪除此維護單據檔案？')) return;
+            try {
+                await post('/api/vendor-maint/' + state.maintModalId + '/docs/delete', { path: p });
+                toast('🗑️ 已刪除單據。', 'ok');
+                await loadMaint();
+                renderMaintDocs();
+            } catch (err) { toast('❌ ' + err.message, 'err'); }
+        }));
+    }
+
+    function openMaintDetail(id) {
+        const r = state.maint.find(x => x.id === Number(id));
+        if (!r) { toast('⚠️ 找不到該筆維護紀錄，請重新整理。', 'warn'); return; }
+        state.maintModalId = r.id;
+        const title = $('maint-modal-title');
+        if (title) title.textContent = '🗂️ 廠商維護紀錄明細 ｜ ' + (r.vendor_name || '') + ' ｜ ' + (r.maint_date || '');
+        const signed = Number(r.signed) === 1
+            ? '<span class="badge badge-active">✍️ 已簽收</span>'
+            : '<span class="badge badge-scrapped">⏳ 未簽收</span>';
+        const cost = Number(r.cost) > 0 ? (money(r.cost) + ' 元') : '0 元';
+        $('maint-modal-info').innerHTML =
+            '<div><b>🏢 維護廠商：</b>' + dash(r.vendor_name) + '</div>'
+            + '<div><b>📅 維護日期：</b>' + dash(r.maint_date) + '</div>'
+            + '<div><b>🖥️ 維護設備：</b>' + dash(r.equipment) + '</div>'
+            + '<div><b>🔢 設備序號：</b>' + dash(r.equipment_sn) + '</div>'
+            + '<div><b>🏷️ 維護類型：</b>' + dash(r.maint_type) + '</div>'
+            + '<div><b>👤 維護人員：</b>' + dash(r.handler) + '</div>'
+            + '<div><b>💰 維護費用：</b>' + cost + '</div>'
+            + '<div><b>✍️ 簽收狀態：</b>' + signed + '</div>'
+            + '<div class="full"><b>🧾 維護內容：</b><br>' + (r.content ? esc(r.content).replace(/\n/g, '<br>') : '<span class="muted">無</span>') + '</div>'
+            + '<div class="full"><b>📝 備註：</b><br>' + (r.notes ? esc(r.notes).replace(/\n/g, '<br>') : '<span class="muted">無</span>') + '</div>';
+        renderMaintDocs();
+        $('maint-modal').classList.remove('hidden');
+    }
+
     function renderFilesModal(title, type, id, groups) {
         $('files-title').textContent = title;
         const body = $('files-body');
@@ -1323,11 +1439,6 @@
         try { await downloadBlob('/api/export/vendors.xlsx', '合作廠商清單.xlsx'); toast('📥 廠商清單已開始下載。', 'ok'); }
         catch (err) { toast('❌ ' + err.message, 'err'); }
     }
-    async function exportMaint() {
-        try { await downloadBlob('/api/export/vendor-maint.xlsx', '廠商維護歷程.xlsx'); toast('📥 維護歷程已開始下載。', 'ok'); }
-        catch (err) { toast('❌ ' + err.message, 'err'); }
-    }
-
     async function importVendorsExcel() {
         const input = $('import-vendor-file');
         const file = input && input.files && input.files[0];
@@ -1537,7 +1648,7 @@
             closeVendorModal();
             if (id) openVendorFiles(id);
         });
-        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDetail(); closeEdit(); closeVendorModal(); closeFilesModal(); } });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeDetail(); closeEdit(); closeVendorModal(); closeMaintDetail(); closeFilesModal(); } });
 
         // 表單
         $('form-asset').addEventListener('submit', submitAssetForm);
@@ -1557,6 +1668,16 @@
         $('vendor-search').addEventListener('input', (e) => { state.vendorKeyword = e.target.value; renderVendors(); });
         $('goto-vendor-add').addEventListener('click', () => showPage('vendors'));
         $('goto-maint-add').addEventListener('click', () => showPage('vendor-maint-add'));
+        $('goto-vendor-board').addEventListener('click', () => showPage('vendor-board'));
+        $('maint-sort-btn').addEventListener('click', (e) => {
+            e.preventDefault();
+            state.maintSort = state.maintSort === 'asc' ? 'desc' : 'asc';
+            renderMaint();
+        });
+        $('export-maint-vendor-btn').addEventListener('click', exportMaintByVendor);
+        $('maint-modal-close').addEventListener('click', closeMaintDetail);
+        $('maint-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'maint-modal') closeMaintDetail(); });
+        $('maint-modal-files').addEventListener('click', () => { const id = state.maintModalId; if (id) openMaintDocs(id); });
         $('maint-search').addEventListener('input', (e) => { state.maintKeyword = e.target.value; renderMaint(); });
         $('m-cancel').addEventListener('click', () => { ['m-date', 'm-equipment', 'm-sn', 'm-type', 'm-handler', 'm-cost', 'm-content', 'm-notes'].forEach(id => { const el = $(id); if (el) el.value = ''; }); });
         $('form-maint').addEventListener('submit', submitMaintForm);
@@ -1581,7 +1702,6 @@
 
         // 報表與附件
         $('export-vendors-btn').addEventListener('click', exportVendors);
-        $('export-maint-btn').addEventListener('click', exportMaint);
         $('modal-export-btn').addEventListener('click', () => exportAssetHistory(state.editingAssetId));
         $('files-close').addEventListener('click', closeFilesModal);
         $('files-modal').addEventListener('click', (e) => { if (e.target && e.target.id === 'files-modal') closeFilesModal(); });

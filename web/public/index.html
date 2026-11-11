@@ -260,19 +260,44 @@
                 <!-- 🗂️ 廠商維護歷程看板 -->
                 <section id="page-vendor-maint-log" class="page hidden">
                     <div class="card">
-                        <h3 class="card-title" style="display:flex;justify-content:space-between;align-items:center;">🗂️ 廠商維護歷程看板
-                            <button type="button" class="btn btn-success btn-sm" id="export-maint-btn">📥 匯出維護歷程</button>
-                        </h3>
-                        <div class="toolbar" style="margin-bottom:12px;">
-                            <input type="text" id="maint-search" placeholder="🔍 搜尋廠商、設備、維護內容..." autocomplete="off">
-                            <div class="toolbar-actions">
-                                <span id="maint-count-label" class="count">—</span>
-                                <button type="button" class="btn btn-primary" id="goto-maint-add">📝 新增維護紀錄</button>
+                        <div style="display:flex;gap:20px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+                            <div class="mini-stats">
+                                <div><div class="mini-stat-label">維護紀錄總數</div><strong id="maint-stat-total" class="mini-stat-value">0</strong></div>
+                                <div><div class="mini-stat-label">📅 本月維護</div><strong id="maint-stat-month" class="mini-stat-value" style="color:#0ea5e9;">0</strong></div>
+                                <div><div class="mini-stat-label">✍️ 已簽收</div><strong id="maint-stat-signed" class="mini-stat-value" style="color:#10b981;">0</strong></div>
+                                <div><div class="mini-stat-label">⏳ 未簽收</div><strong id="maint-stat-unsigned" class="mini-stat-value" style="color:#ef4444;">0</strong></div>
+                                <div><div class="mini-stat-label">💰 維護費用合計</div><strong id="maint-stat-cost" class="mini-stat-value" style="color:#b45309;">0</strong></div>
                             </div>
+                            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                                <button type="button" class="btn btn-primary" id="goto-maint-add">📝 新增維護紀錄</button>
+                                <button type="button" class="btn btn-ghost" id="goto-vendor-board">🏢 前往廠商管理看板</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card" style="border-left:4px solid #8b5cf6;">
+                        <h3 class="card-title">🗂️ 廠商設備維護歷程名冊</h3>
+                        <div class="inline-form" style="margin-bottom:10px;">
+                            <select id="maint-export-vendor" style="min-width:260px;"></select>
+                            <button type="button" class="btn btn-success" id="export-maint-vendor-btn">📥 匯出此廠商維護歷程</button>
+                            <input type="text" id="maint-search" placeholder="🔍 快速篩選（廠商 / 設備 / 維護內容）" autocomplete="off" style="flex-grow:1;">
+                            <span id="maint-count-label" class="count" style="white-space:nowrap;">—</span>
+                        </div>
+                        <div class="tip-mini" style="margin-bottom:12px;">
+                            ※ 匯出檔為單一廠商專屬，內含「維護歷程」與「維護單據清單」兩個工作表；未選擇廠商時匯出全部紀錄。
                         </div>
                         <div class="table-wrap">
                             <table id="maint-table">
-                                <thead><tr><th style="width:110px;">日期</th><th style="width:150px;">廠商</th><th>設備 / 內容</th><th style="width:130px;">類型</th><th style="width:90px;text-align:right;">費用</th><th style="width:80px;text-align:center;">簽收</th><th style="width:130px;text-align:center;">操作</th></tr></thead>
+                                <thead><tr>
+                                    <th style="width:100px;white-space:nowrap;">維護日期 <a href="#" id="maint-sort-btn" class="sort-link" title="點擊切換排序">▼</a></th>
+                                    <th style="width:125px;">廠商名稱</th>
+                                    <th>維護設備</th>
+                                    <th style="width:95px;">類型</th>
+                                    <th style="width:100px;">維護人員</th>
+                                    <th style="width:70px;text-align:right;">費用</th>
+                                    <th style="width:120px;text-align:center;">簽收</th>
+                                    <th style="width:95px;text-align:center;">單據</th>
+                                    <th style="width:120px;text-align:center;">操作</th>
+                                </tr></thead>
                                 <tbody></tbody>
                             </table>
                         </div>
@@ -512,6 +537,24 @@
                 <div id="modal-repairs" class="mini-list"></div>
                 <h4 class="section-title">🔄 轉移歷程</h4>
                 <div id="modal-transfers" class="mini-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🗂️ 廠商維護紀錄明細彈窗（🔍 檢視） -->
+    <div id="maint-modal" class="modal hidden">
+        <div class="modal-card" style="width:760px;">
+            <div class="modal-head">
+                <strong id="maint-modal-title">🗂️ 廠商維護紀錄明細</strong>
+                <div style="white-space:nowrap;">
+                    <button type="button" class="btn btn-primary btn-sm" id="maint-modal-files" style="margin-right:6px;">📎 單據管理</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="maint-modal-close">✕</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="maint-modal-info" class="info-grid"></div>
+                <h4 class="section-title">📎 維護紀錄單據文件</h4>
+                <div id="maint-modal-docs" class="mini-list"></div>
             </div>
         </div>
     </div>
